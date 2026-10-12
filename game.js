@@ -335,9 +335,10 @@ const Game = (() => {
             keys[e.code] = true;
             if (e.code === 'Escape') {
                 if (settingsReturnTo) closeSettings();
+                else if (mp) { if (state !== 'gameover') mpToggleMenu(); }
                 else if (state === 'playing') pauseGame(); else if (state === 'paused') resumeGame(); else if (state === 'evolutionTree') closeEvolutionTree();
             }
-            if (e.code === 'KeyT' && state === 'playing') openEvolutionTree();
+            if (e.code === 'KeyT' && state === 'playing' && !mp) openEvolutionTree();
             if (state === 'upgrading' && !upgradeSelectionPending) {
                 const num = parseInt(e.key);
                 if (num >= 1 && num <= 6) selectUpgradeByIndex(num - 1);
@@ -363,8 +364,10 @@ const Game = (() => {
                 state = 'playing';
                 document.getElementById('roundStart').classList.remove('visible');
                 document.getElementById('roundStart').classList.add('hidden');
+                if (mp && mp.isHost && mp.phase === 'start') { mp.phase = 'playing'; mp.forceSend = true; }
             }
         }
+        if (mp) mpFrame(dt);
         render();
         requestAnimationFrame(loop);
     }
@@ -374,70 +377,80 @@ const Game = (() => {
         if (!p) return;
         runTime += dt;
         roundTimer = Math.max(0, roundTimer - dt);
-        if (roundTimer === 0) { endRound(); return; }
+        if (roundTimer === 0) {
+            if (!mp) { endRound(); return; }
+            if (mp.isHost && mp.phase === 'playing') { mpHostEndRound(); return; }
+        }
+        const controlsOn = !mp || !mp.dead;
+        if (controlsOn) {
+            let mx = 0, my = 0;
+            if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+            if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+            if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+            if (mx !== 0 || my !== 0) { const len = Math.sqrt(mx * mx + my * my); mx /= len; my /= len; }
+            const accel = 1200, friction = 8;
+            p.vx += mx * accel * dt; p.vy += my * accel * dt;
+            p.vx *= Math.max(0, 1 - friction * dt); p.vy *= Math.max(0, 1 - friction * dt);
+            const spd = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            if (spd > p.speed) { p.vx = (p.vx / spd) * p.speed; p.vy = (p.vy / spd) * p.speed; }
+            p.x = clamp(p.x + p.vx * dt, p.size, GAME_W - p.size);
+            p.y = clamp(p.y + p.vy * dt, p.size, GAME_H - p.size);
 
-        let mx = 0, my = 0;
-        if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
-        if (keys['KeyS'] || keys['ArrowDown']) my += 1;
-        if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
-        if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
-        if (mx !== 0 || my !== 0) { const len = Math.sqrt(mx * mx + my * my); mx /= len; my /= len; }
-        const accel = 1200, friction = 8;
-        p.vx += mx * accel * dt; p.vy += my * accel * dt;
-        p.vx *= Math.max(0, 1 - friction * dt); p.vy *= Math.max(0, 1 - friction * dt);
-        const spd = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-        if (spd > p.speed) { p.vx = (p.vx / spd) * p.speed; p.vy = (p.vy / spd) * p.speed; }
-        p.x = clamp(p.x + p.vx * dt, p.size, GAME_W - p.size);
-        p.y = clamp(p.y + p.vy * dt, p.size, GAME_H - p.size);
+            if (keys['Space'] && p.dashTimer <= 0 && p.dashCharges > 0) performDash();
+            p.dashTimer = Math.max(0, p.dashTimer - dt);
+            if (p.dashTimer <= 0 && p.dashCharges < p.dashMaxCharges) p.dashCharges = p.dashMaxCharges;
 
-        if (keys['Space'] && p.dashTimer <= 0 && p.dashCharges > 0) performDash();
-        p.dashTimer = Math.max(0, p.dashTimer - dt);
-        if (p.dashTimer <= 0 && p.dashCharges < p.dashMaxCharges) p.dashCharges = p.dashMaxCharges;
+            p.invulnTimer = Math.max(0, p.invulnTimer - dt); p.flashTimer = Math.max(0, p.flashTimer - dt);
+            p.rearShieldHitFlash = Math.max(0, p.rearShieldHitFlash - dt);
 
-        p.invulnTimer = Math.max(0, p.invulnTimer - dt); p.flashTimer = Math.max(0, p.flashTimer - dt);
-        p.rearShieldHitFlash = Math.max(0, p.rearShieldHitFlash - dt);
-
-        if (p.regen !== 0) {
-            p.regenTimer += dt;
-            if (p.regenTimer >= 1) {
-                p.regenTimer -= 1;
-                p.hp = Math.min(p.maxHp, p.hp + p.regen);
-                if (p.hp <= 0 && p.regen < 0) { playerDeath(); return; }
+            if (p.regen !== 0) {
+                p.regenTimer += dt;
+                if (p.regenTimer >= 1) {
+                    p.regenTimer -= 1;
+                    p.hp = Math.min(p.maxHp, p.hp + p.regen);
+                    if (p.hp <= 0 && p.regen < 0) { playerDeath(); return; }
+                }
             }
-        }
-        if (p.maxShield > 0 && p.shield < p.maxShield) p.shield = Math.min(p.maxShield, p.shield + p.maxShield * 0.05 * dt);
+            if (p.maxShield > 0 && p.shield < p.maxShield) p.shield = Math.min(p.maxShield, p.shield + p.maxShield * 0.05 * dt);
 
-        // Attacks
-        p.attackTimer += dt;
-        let effectiveAtkSpeed = p.attackSpeed;
-        if (p.momentumEnabled) effectiveAtkSpeed *= (1 + Math.min(0.4, p.momentumStacks * 0.04));
-        if (p.killAtkSpeed > 0 && p.killAtkSpeedTimer > 0) effectiveAtkSpeed *= (1 + p.killAtkSpeed);
-        if (p.ascendantActive > 0) effectiveAtkSpeed *= 1.5;
-        if (effectiveAtkSpeed > 0) {
-            const attackInterval = 1 / effectiveAtkSpeed;
-            if (p.attackTimer >= attackInterval) {
-                p.attackTimer -= attackInterval;
-                if (p.burstFire > 0) { p.burstFireCount = p.burstFire; p.burstFireTimer = 0; }
-                playerAttack();
+            // Attacks
+            p.attackTimer += dt;
+            let effectiveAtkSpeed = p.attackSpeed;
+            if (p.momentumEnabled) effectiveAtkSpeed *= (1 + Math.min(0.4, p.momentumStacks * 0.04));
+            if (p.killAtkSpeed > 0 && p.killAtkSpeedTimer > 0) effectiveAtkSpeed *= (1 + p.killAtkSpeed);
+            if (p.ascendantActive > 0) effectiveAtkSpeed *= 1.5;
+            if (effectiveAtkSpeed > 0) {
+                const attackInterval = 1 / effectiveAtkSpeed;
+                if (p.attackTimer >= attackInterval) {
+                    p.attackTimer -= attackInterval;
+                    if (p.burstFire > 0) { p.burstFireCount = p.burstFire; p.burstFireTimer = 0; }
+                    playerAttack();
+                }
             }
-        }
-        if (p.burstFireCount > 0) {
-            p.burstFireTimer += dt;
-            if (p.burstFireTimer >= 0.08) { p.burstFireTimer = 0; p.burstFireCount--; playerAttack(true); }
-        }
+            if (p.burstFireCount > 0) {
+                p.burstFireTimer += dt;
+                if (p.burstFireTimer >= 0.08) { p.burstFireTimer = 0; p.burstFireCount--; playerAttack(true); }
+            }
 
-        if (p.afterimages && (Math.abs(p.vx) > 50 || Math.abs(p.vy) > 50)) p.dashTrail.push({ x: p.x, y: p.y, life: 0.3 });
-        for (let i = p.dashTrail.length - 1; i >= 0; i--) { p.dashTrail[i].life -= dt; if (p.dashTrail[i].life <= 0) p.dashTrail.splice(i, 1); }
+            if (p.afterimages && (Math.abs(p.vx) > 50 || Math.abs(p.vy) > 50)) p.dashTrail.push({ x: p.x, y: p.y, life: 0.3 });
+            for (let i = p.dashTrail.length - 1; i >= 0; i--) { p.dashTrail[i].life -= dt; if (p.dashTrail[i].life <= 0) p.dashTrail.splice(i, 1); }
 
-        if (p.omnipresent) {
-            if (p.echoes.length < 2) for (let i = p.echoes.length; i < 2; i++) p.echoes.push({ x: p.x, y: p.y, offsetAngle: Math.PI * i, orbitR: 80 });
-            for (const e of p.echoes) { e.offsetAngle += dt * 0.8; e.x = p.x + Math.cos(e.offsetAngle) * e.orbitR; e.y = p.y + Math.sin(e.offsetAngle) * e.orbitR; }
-        }
+            if (p.omnipresent) {
+                if (p.echoes.length < 2) for (let i = p.echoes.length; i < 2; i++) p.echoes.push({ x: p.x, y: p.y, offsetAngle: Math.PI * i, orbitR: 80 });
+                for (const e of p.echoes) { e.offsetAngle += dt * 0.8; e.x = p.x + Math.cos(e.offsetAngle) * e.orbitR; e.y = p.y + Math.sin(e.offsetAngle) * e.orbitR; }
+            }
+            if (mp && mp.mode === 'pvp') p.xp += dt * 1.5 * p.xpMult; // в PvP опыт капает и за время в бою
+        } else mpUpdateDead(dt);
+        if (!player) return;
 
         updateOrbitals(dt); updateDrones(dt); updateBeams(dt);
         updateProjectiles(dt); updateEnemyProjectiles(dt);
-        EnemySpawner.update(dt, round, bossActive);
-        updateEnemies(dt); updatePickups(dt); updateHazards(dt); updateBlackHoles(dt);
+        if (!mp || (mp.isHost && mp.mode === 'coop')) { EnemySpawner.update(dt, round, bossActive); updateEnemies(dt); }
+        else if (mp.mode === 'coop') mpUpdateProxies(dt);
+        if (mp) mpUpdateRemoteProjectiles(dt); else updatePickups(dt);
+        updateHazards(dt); updateBlackHoles(dt);
+        if (!player || state !== 'playing') { if (player) updateHUD(); return; }
 
         Particles.update(dt); DmgNumbers.update(dt); Shake.update(dt);
 
@@ -449,7 +462,7 @@ const Game = (() => {
         const p = player; if (!p) return;
         while (p.xp >= p.xpToNext) {
             p.xp -= p.xpToNext; p.level++; p.xpToNext = Math.floor(XP_PER_LEVEL_BASE * Math.pow(XP_LEVEL_SCALE, p.level - 1));
-            p.maxHp += 5; p.hp = Math.min(p.maxHp, p.hp + 5); p.damage += 1;
+            p.maxHp += 5; if (!(mp && mp.dead)) p.hp = Math.min(p.maxHp, p.hp + 5); p.damage += 1;
             Particles.emit(p.x, p.y, 30, '#a855f7', { speed: 80, life: 0.5 });
             DmgNumbers.spawn(p.x, p.y - 24, 'LEVEL UP', true);
             Audio.play('upgrade');
@@ -510,6 +523,7 @@ const Game = (() => {
         proj.fire = Math.random() < p.fireChance; proj.ice = Math.random() < p.iceChance; proj.poison = Math.random() < p.poisonChance;
         proj.voidDmg = p.voidDamage; proj.crit = crit; proj.trail = p.projTrail; proj.trailDmg = p.projTrailDmg;
         proj.split = p.projSplit; proj.isSplit = false; proj.isReflected = false;
+        if (mp) mpRecordShot(proj);
     }
 
     function fireBeam(angle) { beams.push({ x: player.x, y: player.y, angle: angle, length: 500, damage: player.beamDamage || player.damage * 0.3, width: 6, life: 0.1, color: '#00f0ff', hit: new Set() }); }
@@ -527,6 +541,7 @@ const Game = (() => {
                 proj.x = p.x; proj.y = p.y; proj.vx = Math.cos(a) * 500; proj.vy = Math.sin(a) * 500;
                 proj.damage = p.damage * 1.5; proj.size = 4 * p.projSizeMult; proj.life = 1.2; proj.pierce = 2; proj.ricochet = 0;
                 proj.hit = new Set(); proj.color = '#cc44ff'; proj.isPhantom = true;
+                if (mp) mpRecordShot(proj);
             }
         }
         Audio.play('dash'); Particles.emit(p.x, p.y, 15, '#00f0ff', { speed: 100, life: 0.3 });
@@ -609,6 +624,7 @@ const Game = (() => {
 
     function damageEnemy(e, dmg, crit = false) {
         if (e.dead) return;
+        if (e.proxy) { if (mp) mpHitProxy(e, dmg, crit); return; }
         if (e.armor) dmg = Math.max(1, dmg - e.armor);
         e.hp -= dmg; e.flashTimer = 0.1; totalDamageDealt += dmg;
         DmgNumbers.spawn(e.x, e.y, dmg, crit); Audio.play('hit');
@@ -617,14 +633,22 @@ const Game = (() => {
 
     function killEnemy(e) {
         e.dead = true; kills++; totalKills++;
-        pickups.push({ x: e.x, y: e.y, type: 'xp', value: (e.xpValue || 3) * player.xpMult, life: 15, size: 4, vy: 0 });
-        if (Math.random() < 0.08) pickups.push({ x: e.x, y: e.y, type: 'heal', value: 10 * player.healMult, life: 12, size: 5, vy: 0 });
-        if (player.killHeal > 0) player.hp = Math.min(player.maxHp, player.hp + player.killHeal);
-        if (e.isElite) { evolutionPoints += 1; DmgNumbers.spawn(e.x, e.y - 20, '+1 EP', false); }
-        if (e.isBoss) { evolutionPoints += 3; DmgNumbers.spawn(e.x, e.y - 20, '+3 EP', false); }
+        const byMe = !hitOwner;
+        if (mp) {
+            // В кооперативе опыт общий: хост копит его в world.xp, гости добавляют себе разницу
+            if (byMe) mp.myKills++;
+            mp.teamXp += e.xpValue || 3;
+            player.xp += (e.xpValue || 3) * player.xpMult;
+        } else {
+            pickups.push({ x: e.x, y: e.y, type: 'xp', value: (e.xpValue || 3) * player.xpMult, life: 15, size: 4, vy: 0 });
+            if (Math.random() < 0.08) pickups.push({ x: e.x, y: e.y, type: 'heal', value: 10 * player.healMult, life: 12, size: 5, vy: 0 });
+        }
+        if (player.killHeal > 0 && byMe && !(mp && mp.dead)) player.hp = Math.min(player.maxHp, player.hp + player.killHeal);
+        if (e.isElite) { evolutionPoints += 1; if (mp) mp.teamEp += 1; DmgNumbers.spawn(e.x, e.y - 20, '+1 EP', false); }
+        if (e.isBoss) { evolutionPoints += 3; if (mp) mp.teamEp += 3; DmgNumbers.spawn(e.x, e.y - 20, '+3 EP', false); }
         Particles.emit(e.x, e.y, 12, e.color || '#ff4466', { speed: 100, life: 0.3 });
         Audio.play('kill'); Shake.add(2);
-        if (player.deathBloom) createExplosion(e.x, e.y, 55, player.damage * 0.5);
+        if (player.deathBloom && byMe) createExplosion(e.x, e.y, 55, player.damage * 0.5);
     }
 
     function updateEnemyProjectiles(dt) {
@@ -633,7 +657,8 @@ const Game = (() => {
             if (proj.x < -20 || proj.x > GAME_W + 20 || proj.y < -20 || proj.y > GAME_H + 20) return true;
             
             // REAR SHIELD
-            if (player && player.rearShieldLevel > 0) {
+            const meAlive = player && !(mp && mp.dead);
+            if (meAlive && player.rearShieldLevel > 0) {
                 const aimAngle = angleBetween(player.x, player.y, mouseGameX, mouseGameY);
                 const shieldAngle = aimAngle + Math.PI;
                 const localX = (proj.x - player.x) * Math.cos(-shieldAngle) - (proj.y - player.y) * Math.sin(-shieldAngle);
@@ -648,7 +673,7 @@ const Game = (() => {
                 }
             }
 
-            if (player && dist(proj.x, proj.y, player.x, player.y) < proj.size + player.size) {
+            if (meAlive && dist(proj.x, proj.y, player.x, player.y) < proj.size + player.size) {
                 if (player.reflectChance > 0 && Math.random() < player.reflectChance) { reflectProjectile(proj, 2); return true; }
                 damagePlayer(proj.damage);
                 Particles.emit(proj.x, proj.y, 5, '#ff4466', { speed: 50, life: 0.2 });
@@ -670,17 +695,18 @@ const Game = (() => {
         if (level >= 5 || player.realityMirror) createExplosion(proj.x, proj.y, 80, proj.damage * 2);
     }
 
-    function damagePlayer(dmg) {
-        const p = player; if (!p || p.invulnTimer > 0) return;
+    function damagePlayer(dmg, attacker = null) {
+        const p = player; if (!p || p.invulnTimer > 0 || (mp && mp.dead)) return;
         dmg = Math.max(1, dmg * (1 - p.dmgReduction));
         if (p.shield > 0) { const absorbed = Math.min(p.shield, dmg); p.shield -= absorbed; dmg -= absorbed; }
         if (dmg > 0) { p.hp -= dmg; totalDamageReceived += dmg; }
         p.invulnTimer = INVULN_DURATION; p.flashTimer = 0.2; Shake.add(5); Audio.play('playerHit');
         if (p.hp <= 0 && p.emergencySurvival && !p.emergencyUsed) { p.hp = Math.floor(p.maxHp * 0.15); p.emergencyUsed = true; p.invulnTimer = 2; return; }
-        if (p.hp <= 0) playerDeath();
+        if (p.hp <= 0) { if (mp) mpOnLocalDeath(attacker); else playerDeath(); }
     }
 
     function playerDeath() {
+        if (mp) { mpOnLocalDeath(null); return; }
         state = 'gameover'; Audio.play('death'); Shake.add(10);
         persistent.totalRuns++; persistent.bestRound = Math.max(persistent.bestRound, round);
         persistent.totalKillsAll += kills; persistent.totalTimeAll += runTime; savePersistent(); showGameOver();
@@ -693,10 +719,14 @@ const Game = (() => {
             const e = enemies[i]; if (e.dead) { enemies.splice(i, 1); continue; }
             if (e.hp <= 0) { killEnemy(e); continue; }
             e.flashTimer = Math.max(0, (e.flashTimer || 0) - dt);
-            if (e.behavior) e.behavior(e, dt, 1 * (player.timeDialation || 1));
+            if (e.behavior) {
+                aiTarget = mp ? mpNearestTarget(e) : null;
+                e.behavior(e, dt, 1 * (player.timeDialation || 1));
+                aiTarget = null;
+            }
             e.x = clamp(e.x, e.size, GAME_W - e.size); e.y = clamp(e.y, e.size, GAME_H - e.size);
 
-            if (player && !e.rangedOnly) {
+            if (player && !e.rangedOnly && !(mp && mp.dead)) {
                 const cDist = dist(e.x, e.y, player.x, player.y), mDist = e.size + player.size;
                 if (cDist < mDist) {
                     const pa = angleBetween(player.x, player.y, e.x, e.y);
@@ -755,15 +785,16 @@ const Game = (() => {
                 const count = rngInt(2, Math.min(3 + Math.floor(currentRound / 2), 8));
                 const types = EnemyTypes.getTypesForRound(currentRound);
                 for (let i = 0; i < count; i++) {
-                    const e = EnemyTypes.create(choose(types), currentRound);
-                    const pos = EnemyTypes.findSafeSpawnPosition(player, e.size, enemies, false);
+                    const typeKey = choose(types);
+                    const e = EnemyTypes.create(typeKey, currentRound); e.typeKey = typeKey;
+                    const pos = EnemyTypes.findSafeSpawnPosition(mp ? mpSpawnRef() : player, e.size, enemies, false);
                     if (pos.success) { e.x = pos.x; e.y = pos.y; enemies.push(e); }
                 }
             }
         }
         function spawnBoss(currentRound) {
             const boss = EnemyTypes.createBoss(currentRound);
-            const pos = EnemyTypes.findSafeSpawnPosition(player, boss.size, enemies, true);
+            const pos = EnemyTypes.findSafeSpawnPosition(mp ? mpSpawnRef() : player, boss.size, enemies, true);
             if (pos.success) { boss.x = pos.x; boss.y = pos.y; } else { boss.x = GAME_W/2; boss.y = 60; }
             enemies.push(boss); document.getElementById('hudBoss').style.display = 'block'; document.getElementById('hudBossName').textContent = boss.name;
             return boss;
@@ -774,9 +805,10 @@ const Game = (() => {
     function startRound() {
         state = 'roundStart'; roundStartTimer = 1.5;
         document.getElementById('roundStart').classList.remove('hidden'); document.getElementById('roundStart').classList.add('visible');
-        document.getElementById('rsRound').textContent = round; document.getElementById('rsTime').textContent = Math.ceil(roundDuration);
+        document.getElementById('rsRound').textContent = (mp && mp.mode === 'pvp') ? `${round}/${PVP_ROUNDS}` : round;
+        document.getElementById('rsTime').textContent = Math.ceil(roundDuration);
         EnemySpawner.reset();
-        if (round > 1 && round % BOSS_INTERVAL === 0) {
+        if (round > 1 && round % BOSS_INTERVAL === 0 && (!mp || (mp.isHost && mp.mode === 'coop'))) {
             setTimeout(() => { if (state === 'playing' || state === 'roundStart') bossActive = EnemySpawner.spawnBoss(round); }, 2000);
         }
     }
@@ -814,7 +846,15 @@ const Game = (() => {
         if (upgradeSelectionPending || idx < 0 || idx >= currentUpgradeOptions.length) return;
         upgradeSelectionPending = true; const up = currentUpgradeOptions[idx];
         UpgradeSystem.apply(up, player); acquiredUpgrades.push(up);
-        Audio.play('upgrade'); setTimeout(() => { document.getElementById('upgradeScreen').classList.remove('active'); advanceRound(); }, 400);
+        if (mp) { mp.build.push('u:' + up.id); mp.buildDirty = true; }
+        const online = !!mp;
+        Audio.play('upgrade'); setTimeout(() => {
+            document.getElementById('upgradeScreen').classList.remove('active');
+            if (!online) { advanceRound(); return; }
+            if (!mp || state !== 'upgrading') return;
+            // В сетевой игре ждём остальных: следующий раунд запускает хост
+            mp.readyRound = round; mp.forceSend = true; mpShowWait();
+        }, 400);
     }
 
     // ============================================================
@@ -885,7 +925,9 @@ const Game = (() => {
             el.innerHTML = nd.status === 'locked' ? '?' : nd.icon;
             if (nd.status === 'available') el.addEventListener('click', () => {
                 if (!player.evolutionBranch && nd.tier === 1 && !confirm(`Commit to ${nd.branchName}? Other branches will lock.`)) return;
-                evolutionPoints -= nd.form.cost; UpgradeSystem.applyEvolutionForm(player, nd.branchId, nd.form.id); renderEvolutionTreeGraph();
+                evolutionPoints -= nd.form.cost; UpgradeSystem.applyEvolutionForm(player, nd.branchId, nd.form.id);
+                if (mp) { mp.build.push(`e:${nd.branchId}:${nd.form.id}`); mp.buildDirty = true; mp.forceSend = true; }
+                renderEvolutionTreeGraph();
             });
             el.addEventListener('mouseenter', () => {
                 tooltip.innerHTML = `<div class="tt-name" style="color: ${nd.status === 'locked' ? '#888' : nd.branchColor}">${nd.form.name}</div><div class="tt-branch">${nd.branchName} - Tier ${nd.tier}</div><div class="tt-desc">${nd.form.description}</div>${nd.form.cost > 0 ? `<div class="tt-cost">Cost: ${nd.form.cost} EP</div>` : ''}`;
@@ -896,6 +938,615 @@ const Game = (() => {
             el.addEventListener('mouseleave', () => tooltip.classList.remove('visible'));
             nodesContainer.appendChild(el);
         });
+    }
+
+    // ============================================================
+    // MULTIPLAYER — кооператив и PvP через Firebase Realtime Database
+    // Хост считает врагов и раунды, каждый игрок считает себя сам.
+    // Каждый пишет только свою часть: state/{uid}, hits/{uid}; хост — world.
+    // ============================================================
+    const NET_SEND_INTERVAL = 0.25;      // отправка не чаще 4 раз в секунду
+    const PVP_ROUNDS = 5;
+    const UPGRADE_WAIT_LIMIT = 45;       // сек: не ждать вечно игрока, ушедшего в AFK на экране улучшений
+    const SLOT_COLORS = ['#00f0ff', '#ff3df2', '#ffd400', '#3dff7a'];
+    const PVP_SPAWNS = [[150, 150], [GAME_W - 150, GAME_H - 150], [GAME_W - 150, 150], [150, GAME_H - 150]];
+    const FILL_UPGRADE = { id: 'fill_damage', effect: (p) => { p.damage *= 1.1; } };
+    let mp = null;
+    let aiTarget = null;     // цель для ИИ врага (ближайший игрок) — читается через Game.getPlayer()
+    let hitOwner = null;     // uid игрока, чей урон сейчас применяет хост
+    let rprojs = [];         // снаряды других игроков (у себя симулируем локально)
+    let hooks = {};
+
+    function hexOf(c) { const m = /^#([0-9a-f]{6})/i.exec(c || ''); return m ? m[1] : 'ff4466'; }
+    function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+    function netSeq() { return Date.now() % 1000000000; }
+
+    function startOnline(opts) {
+        hideAllScreens();
+        mp = {
+            net: opts.net, mode: opts.mode === 'pvp' ? 'pvp' : 'coop', isHost: !!opts.isHost, uid: opts.uid, name: opts.name || 'player',
+            slot: opts.slot | 0, matchId: opts.matchId, onQuit: opts.onQuit || null, onOver: opts.onOver || null,
+            players: opts.players || {}, remotes: {},
+            sendTimer: 0, forceSend: true, shotsOut: [], epOut: [],
+            hitTotals: new Map(), hitsDirty: false, hostApplied: {},
+            teamXp: 0, teamEp: 0, lastTeamXp: 0, lastTeamEp: 0, lastEps: 0,
+            phase: 'start', readyRound: 0, upgradeWait: 0,
+            dead: false, respawnTimer: 0, kb: {}, myKills: 0, pvpKillsSeen: 0,
+            build: [], buildDirty: true, nextEnemyId: 1, proxies: new Map(),
+            menuOpen: false, over: false, hudTimer: 0, boss: '', finalRes: ''
+        };
+        player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll(); rprojs = [];
+        pickups = []; acquiredUpgrades = []; evolutionPoints = 0; currentUpgradeOptions = [];
+        round = 1; roundDuration = DEFAULT_ROUND_DURATION; roundTimer = roundDuration;
+        kills = 0; runTime = 0; totalDamageDealt = 0; totalDamageReceived = 0; bossActive = null; upgradeSelectionPending = false;
+        Particles.clear(); DmgNumbers.clear();
+        document.getElementById('hudBoss').style.display = 'none';
+        document.getElementById('hud').classList.remove('hidden');
+        document.getElementById('mpPanel').classList.remove('hidden');
+        if (mp.mode === 'pvp') mpPlaceAtSpawn();
+        const rj = opts.rejoin;
+        if (rj && rj.myState && rj.myState.mid === mp.matchId && rj.world && rj.world.mid === mp.matchId) mpRestore(rj.myState, rj.world);
+        else startRound();
+        mpRenderPanel();
+        mpSendNow();
+    }
+
+    // Возврат в матч после обновления страницы: повторяем купленные улучшения и формы эволюции
+    function mpRestore(s, w) {
+        const all = UpgradeSystem.getAllUpgrades();
+        const tokens = String(s.b || '').split('|').filter(Boolean);
+        for (const t of tokens) {
+            const parts = t.split(':');
+            if (parts[0] === 'u') {
+                const up = all.find(u => u.id === parts[1]) || (parts[1].indexOf('fill_') === 0 ? FILL_UPGRADE : null);
+                if (up) { UpgradeSystem.apply(up, player); acquiredUpgrades.push(up); }
+            } else if (parts[0] === 'e') UpgradeSystem.applyEvolutionForm(player, parts[1], parts[2]);
+        }
+        mp.build = tokens;
+        const lv = s.lv || 1;
+        for (let i = 1; i < lv; i++) { player.level++; player.maxHp += 5; player.damage += 1; }
+        player.xpToNext = Math.floor(XP_PER_LEVEL_BASE * Math.pow(XP_LEVEL_SCALE, player.level - 1));
+        player.xp = s.xp || 0; evolutionPoints = s.ep || 0; mp.kb = s.kb || {}; mp.myKills = s.k || 0;
+        if (typeof s.x === 'number') player.x = s.x;
+        if (typeof s.y === 'number') player.y = s.y;
+        player.hp = clamp(typeof s.hp === 'number' ? s.hp : player.maxHp, 0, player.maxHp);
+        mp.readyRound = s.rd || 0;
+        mp.dead = s.al === false;
+        if (mp.dead && mp.mode === 'pvp') mp.respawnTimer = 1;
+        if (!mp.dead && player.hp <= 0) player.hp = player.maxHp;
+        mp.pvpKillsSeen = null; // пересчитается из чужих state без повторной награды
+
+        round = w.r || 1; roundDuration = DEFAULT_ROUND_DURATION;
+        roundTimer = typeof w.t === 'number' ? w.t : DEFAULT_ROUND_DURATION;
+        mp.teamXp = mp.lastTeamXp = w.xp || 0; mp.teamEp = mp.lastTeamEp = w.epb || 0; mp.lastEps = w.eps || 0;
+        kills = mp.mode === 'coop' ? (w.kills || 0) : 0;
+        if (mp.isHost && mp.mode === 'coop') mpRestoreEnemies(w.en || '');
+        mp.phase = w.ph === 'start' ? 'playing' : (w.ph || 'playing');
+        if (w.ph === 'over') { mpShowOver(w); return; }
+        if (w.ph === 'upgrading') {
+            state = 'upgrading';
+            if (mp.readyRound >= round) mpShowWait(); else showUpgradeScreen();
+        } else state = 'playing';
+        mp.buildDirty = true; mp.forceSend = true;
+    }
+
+    function mpRestoreEnemies(str) {
+        enemies = [];
+        for (const d of mpDecodeEnemies(str)) {
+            let e;
+            if (d.flags & 1) e = EnemyTypes.createBoss(round);
+            else { e = EnemyTypes.create(d.type, round); if (d.flags & 2) EnemyTypes.makeElite(e, round); }
+            e.x = d.x; e.y = d.y; e.hp = d.hp; e.maxHp = d.maxHp; e.netId = d.id; e.typeKey = d.type; e.spawnFlash = 0;
+            enemies.push(e);
+            mp.nextEnemyId = Math.max(mp.nextEnemyId, d.id + 1);
+            if (e.isBoss) { bossActive = e; document.getElementById('hudBoss').style.display = 'block'; document.getElementById('hudBossName').textContent = e.name; }
+        }
+    }
+
+    function stopOnline() {
+        if (!mp) return;
+        mp = null; aiTarget = null; hitOwner = null; rprojs = [];
+        enemies = []; pickups = []; projPool.releaseAll(); eProjPool.releaseAll(); Particles.clear(); DmgNumbers.clear();
+        bossActive = null; player = null;
+        hideAllScreens();
+        ['hud', 'mpPanel', 'mpWait'].forEach(id => document.getElementById(id).classList.add('hidden'));
+        document.getElementById('roundStart').classList.remove('visible'); document.getElementById('roundStart').classList.add('hidden');
+        document.getElementById('hudBoss').style.display = 'none';
+        mpResetGameOverScreen();
+        state = 'menu';
+    }
+
+    function mpPlaceAtSpawn() {
+        const sp = PVP_SPAWNS[mp.slot % PVP_SPAWNS.length];
+        player.x = sp[0]; player.y = sp[1]; player.vx = 0; player.vy = 0;
+    }
+
+    function mpNearestTarget(e) {
+        let best = null, bestD = Infinity;
+        if (player && !mp.dead) { best = player; bestD = dist(e.x, e.y, player.x, player.y); }
+        for (const uid in mp.remotes) {
+            const rm = mp.remotes[uid];
+            if (!rm.alive || !rm.online) continue;
+            const d = dist(e.x, e.y, rm.x, rm.y);
+            if (d < bestD) { bestD = d; best = rm; }
+        }
+        return best;
+    }
+
+    function mpSpawnRef() {
+        const list = [];
+        if (player && !mp.dead) list.push(player);
+        for (const uid in mp.remotes) { const rm = mp.remotes[uid]; if (rm.alive && rm.online) list.push(rm); }
+        return list.length ? choose(list) : player;
+    }
+
+    function mpActiveRemotes() { return Object.values(mp.remotes).filter(rm => rm.online); }
+
+    // ---------- ВРАГИ: кодирование снимка (хост → все) ----------
+    function mpEncodeEnemies() {
+        const out = [];
+        for (const e of enemies) {
+            if (e.dead) continue;
+            if (!e.netId) e.netId = mp.nextEnemyId++;
+            const flags = (e.isBoss ? 1 : 0) | (e.isElite ? 2 : 0) | (e.rangedOnly ? 4 : 0) | ((e.telegraph || 0) > 0 ? 8 : 0);
+            out.push([e.netId, Math.round(e.x), Math.round(e.y), Math.round(e.size), Math.max(1, Math.ceil(e.hp)), Math.ceil(e.maxHp),
+                hexOf(e.color), flags, e.contactDmg || 10, e.isBoss ? 'boss' : (e.typeKey || 'glitcher')].join(','));
+            if (out.length >= 150) break;
+        }
+        return out.join(';');
+    }
+
+    function mpDecodeEnemies(str) {
+        const list = [];
+        if (!str) return list;
+        for (const part of String(str).split(';')) {
+            const f = part.split(',');
+            if (f.length < 10) continue;
+            list.push({ id: +f[0], x: +f[1], y: +f[2], size: +f[3], hp: +f[4], maxHp: +f[5], color: '#' + f[6], flags: +f[7], cd: +f[8], type: f[9] });
+        }
+        return list;
+    }
+
+    // Гость: враги — «тени» с позициями от хоста, плавно подтягиваем их к последним координатам
+    function mpSyncProxies(str) {
+        const seen = new Set(); const now = performance.now();
+        for (const d of mpDecodeEnemies(str)) {
+            seen.add(d.id);
+            let e = mp.proxies.get(d.id);
+            if (!e) { e = { proxy: true, netId: d.id, x: d.x, y: d.y, tx: d.x, ty: d.y, dead: false, flashTimer: 0, armor: 0, hp: d.hp }; mp.proxies.set(d.id, e); }
+            e.tx = d.x; e.ty = d.y; e.size = d.size; e.maxHp = d.maxHp; e.color = d.color; e.contactDmg = d.cd;
+            e.isBoss = !!(d.flags & 1); e.isElite = !!(d.flags & 2); e.rangedOnly = !!(d.flags & 4); e.telegraph = (d.flags & 8) ? 1 : 0;
+            if (e.dead) { if (now - e.deadAt > 1200) { e.dead = false; e.hp = d.hp; } }
+            else e.hp = Math.min(e.hp, d.hp);
+        }
+        for (const [id] of mp.proxies) if (!seen.has(id)) mp.proxies.delete(id);
+        enemies = Array.from(mp.proxies.values());
+    }
+
+    function mpUpdateProxies(dt) {
+        const k = Math.min(1, dt * 10);
+        for (const e of enemies) {
+            if (Math.abs(e.tx - e.x) > 200 || Math.abs(e.ty - e.y) > 200) { e.x = e.tx; e.y = e.ty; }
+            else { e.x += (e.tx - e.x) * k; e.y += (e.ty - e.y) * k; }
+            e.flashTimer = Math.max(0, (e.flashTimer || 0) - dt);
+            if (e.dead || mp.dead || e.rangedOnly || !player) continue;
+            if (dist(e.x, e.y, player.x, player.y) < e.size + player.size) damagePlayer(e.contactDmg || 10);
+        }
+    }
+
+    // Гость попал по врагу: показываем сразу, а урон копим и отправляем хосту (накопительным итогом —
+    // даже если одно сообщение потеряется, следующее его перекроет)
+    function mpHitProxy(e, dmg, crit) {
+        e.hp -= dmg; e.flashTimer = 0.1; totalDamageDealt += dmg;
+        DmgNumbers.spawn(e.x, e.y, dmg, crit); Audio.play('hit');
+        const cur = mp.hitTotals.get(e.netId) || { d: 0, t: 0 };
+        cur.d += dmg; cur.t = performance.now(); mp.hitTotals.set(e.netId, cur); mp.hitsDirty = true;
+        if (e.hp <= 0) {
+            e.dead = true; e.deadAt = performance.now(); mp.myKills++;
+            Particles.emit(e.x, e.y, 12, e.color || '#ff4466', { speed: 100, life: 0.3 });
+            Audio.play('kill'); Shake.add(2);
+        }
+    }
+
+    // Хост: применяем урон гостей
+    function netHits(all) {
+        if (!mp || !mp.isHost || mp.mode !== 'coop' || !all) return;
+        for (const uid in all) {
+            if (uid === mp.uid) continue;
+            const h = all[uid];
+            if (!h || h.mid !== mp.matchId) continue;
+            const applied = mp.hostApplied[uid] || (mp.hostApplied[uid] = new Map());
+            const present = new Set();
+            for (const pair of String(h.h || '').split(',')) {
+                if (!pair) continue;
+                const [idS, dS] = pair.split(':'); const id = +idS, total = +dS;
+                present.add(id);
+                const diff = total - (applied.get(id) || 0);
+                if (diff <= 0) continue;
+                applied.set(id, total);
+                const e = enemies.find(en => en.netId === id && !en.dead);
+                if (e) { hitOwner = uid; damageEnemy(e, diff); hitOwner = null; }
+            }
+            for (const [id] of applied) if (!present.has(id)) applied.delete(id);
+        }
+    }
+
+    // ---------- СНАРЯДЫ ИГРОКОВ ----------
+    function mpRecordShot(proj) {
+        if (!mp || mp.shotsOut.length >= 40) return;
+        mp.shotsOut.push([Math.round(proj.x), Math.round(proj.y), Math.round(proj.vx), Math.round(proj.vy),
+            Math.round(proj.size * 10), Math.round(proj.damage), proj.crit ? 1 : (proj.isPhantom ? 2 : 0), Math.round(proj.life * 10)].join(','));
+    }
+
+    function mpSpawnRemoteShots(owner, str) {
+        const rm = mp.remotes[owner];
+        for (const part of String(str).split(';')) {
+            const f = part.split(',').map(Number);
+            if (f.length < 8) continue;
+            rprojs.push({ x: f[0], y: f[1], vx: f[2], vy: f[3], size: Math.max(2, f[4] / 10), dmg: f[5],
+                color: f[6] === 1 ? '#ffd700' : f[6] === 2 ? '#cc44ff' : (rm ? rm.color : '#ff3df2'), life: f[7] / 10, owner });
+        }
+        if (rprojs.length > 400) rprojs.splice(0, rprojs.length - 400);
+    }
+
+    function mpUpdateRemoteProjectiles(dt) {
+        for (let i = rprojs.length - 1; i >= 0; i--) {
+            const q = rprojs[i];
+            q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt;
+            let remove = q.life <= 0 || q.x < -20 || q.x > GAME_W + 20 || q.y < -20 || q.y > GAME_H + 20;
+            if (!remove && mp.mode === 'pvp' && !mp.dead && player && dist(q.x, q.y, player.x, player.y) < q.size + player.size) {
+                damagePlayer(q.dmg, q.owner);
+                Particles.emit(q.x, q.y, 5, q.color, { speed: 50, life: 0.2 });
+                remove = true;
+            }
+            if (!remove && mp.mode === 'coop') {
+                for (const e of enemies) if (!e.dead && dist(q.x, q.y, e.x, e.y) < q.size + e.size) { remove = true; break; }
+            }
+            if (remove) rprojs.splice(i, 1);
+        }
+    }
+
+    // ---------- СНАРЯДЫ ВРАГОВ (хост → все, у каждого симулируются локально) ----------
+    function mpRecordEnemyShot(x, y, vx, vy, damage, color, life) {
+        if (!mp || !mp.isHost || mp.epOut.length >= 60) return;
+        mp.epOut.push([Math.round(x), Math.round(y), Math.round(vx), Math.round(vy), Math.round(damage || 0), hexOf(color), Math.round((life || 3) * 10)].join(','));
+    }
+
+    function mpSpawnEnemyShots(str) {
+        for (const part of String(str).split(';')) {
+            const f = part.split(',');
+            if (f.length < 7) continue;
+            const p = eProjPool.get();
+            p.x = +f[0]; p.y = +f[1]; p.vx = +f[2]; p.vy = +f[3]; p.damage = +f[4]; p.color = '#' + f[5]; p.life = (+f[6]) / 10; p.size = 4; p.source = null;
+        }
+    }
+
+    // ---------- СОСТОЯНИЯ ИГРОКОВ ----------
+    function netPlayers(players) {
+        if (!mp) return;
+        mp.players = players || {};
+        for (const uid in mp.remotes) {
+            const info = mp.players[uid];
+            mp.remotes[uid].online = !!info && info.online !== false;
+            if (info) mp.remotes[uid].name = info.name;
+        }
+    }
+
+    function netStates(all) {
+        if (!mp || !all) return;
+        const seen = new Set();
+        for (const uid in all) {
+            if (uid === mp.uid) continue;
+            const s = all[uid];
+            if (!s || s.mid !== mp.matchId) continue;
+            seen.add(uid);
+            const info = mp.players[uid] || {};
+            let rm = mp.remotes[uid];
+            if (!rm) {
+                rm = mp.remotes[uid] = { uid, x: s.x || 0, y: s.y || 0, tx: s.x || 0, ty: s.y || 0, a: 0, lastSs: s.ss, size: PLAYER_SIZE };
+            } else if (s.ss && s.ss !== rm.lastSs) {
+                rm.lastSs = s.ss;
+                if (s.sh) { rm.color = SLOT_COLORS[(info.slot !== undefined ? +info.slot : 0) % 4]; mpSpawnRemoteShots(uid, s.sh); }
+            }
+            rm.tx = s.x || 0; rm.ty = s.y || 0; rm.a = s.a || 0;
+            rm.hp = s.hp || 0; rm.mhp = s.mhp || 100; rm.lv = s.lv || 1; rm.alive = s.al !== false; rm.rd = s.rd || 0;
+            rm.size = s.sz || PLAYER_SIZE; rm.formColor = s.c || ''; rm.k = s.k || 0; rm.kb = s.kb || {};
+            rm.name = info.name || s.n || '???';
+            rm.slot = info.slot !== undefined ? +info.slot : 0;
+            rm.color = SLOT_COLORS[rm.slot % 4];
+            rm.online = info.online !== false && (info.name !== undefined || !!s.n);
+        }
+        for (const uid in mp.remotes) if (!seen.has(uid)) delete mp.remotes[uid];
+        if (mp.mode === 'pvp') mpCheckPvpKills();
+    }
+
+    function mpPvpKillsOf(uid) {
+        let n = 0;
+        if (uid !== mp.uid) n += mp.kb[uid] || 0;
+        for (const u in mp.remotes) if (u !== uid) n += (mp.remotes[u].kb && mp.remotes[u].kb[uid]) || 0;
+        return n;
+    }
+
+    function mpCheckPvpKills() {
+        const mine = mpPvpKillsOf(mp.uid);
+        if (mp.pvpKillsSeen === null) mp.pvpKillsSeen = mine;
+        else if (mine > mp.pvpKillsSeen && player) {
+            const d = mine - mp.pvpKillsSeen; mp.pvpKillsSeen = mine;
+            player.xp += 25 * d * player.xpMult;
+            player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.2 * d);
+            DmgNumbers.spawn(player.x, player.y - 30, '+KILL', true); Audio.play('kill');
+        }
+        kills = mine;
+    }
+
+    // ---------- МИР (хост → гости) ----------
+    function netWorld(w) {
+        if (!mp || !w || w.mid !== mp.matchId || mp.isHost || !player) return;
+        if ((w.xp || 0) > mp.lastTeamXp) { player.xp += (w.xp - mp.lastTeamXp) * player.xpMult; mp.lastTeamXp = w.xp; }
+        if ((w.epb || 0) > mp.lastTeamEp) { evolutionPoints += w.epb - mp.lastTeamEp; mp.lastTeamEp = w.epb; }
+        if (mp.mode === 'coop') kills = w.kills || 0;
+        if (w.eps && w.eps !== mp.lastEps) { if (w.ep) mpSpawnEnemyShots(w.ep); mp.lastEps = w.eps; }
+        if (mp.mode === 'coop') mpSyncProxies(w.en || '');
+        mp.boss = w.boss || '';
+        if (w.ph === 'over') { mp.finalRes = w.res || ''; if (!mp.over) mpShowOver(w); return; }
+        if ((w.ph === 'start' || w.ph === 'playing') && w.r > round) mpBeginRound(w.r);
+        if (w.ph === 'playing' && w.r === round && state === 'playing' && typeof w.t === 'number') roundTimer = w.t;
+        if (w.ph === 'upgrading' && w.r === round && (state === 'playing' || state === 'roundStart')) {
+            document.getElementById('roundStart').classList.remove('visible'); document.getElementById('roundStart').classList.add('hidden');
+            endRound();
+        }
+        mp.phase = w.ph;
+    }
+
+    function mpBeginRound(r) {
+        round = r; roundDuration = DEFAULT_ROUND_DURATION; roundTimer = roundDuration;
+        document.getElementById('upgradeScreen').classList.remove('active');
+        document.getElementById('evolutionTreeScreen').classList.remove('active');
+        mpHideWait();
+        upgradeSelectionPending = false;
+        if (mp.mode === 'coop') {
+            if (mp.dead) { mp.dead = false; player.hp = Math.max(1, Math.floor(player.maxHp * 0.5)); player.invulnTimer = 2; }
+        } else {
+            mp.dead = false; mp.respawnTimer = 0; player.hp = player.maxHp; player.invulnTimer = 1.5;
+            mpPlaceAtSpawn(); rprojs = []; eProjPool.releaseAll();
+        }
+        if (mp.isHost) enemies = enemies.filter(e => !e.dead);
+        startRound();
+        mp.forceSend = true;
+    }
+
+    function mpHostEndRound() {
+        if (mp.mode === 'pvp' && round >= PVP_ROUNDS) { mpHostFinish(); return; }
+        mp.phase = 'upgrading'; mp.upgradeWait = 0; mp.forceSend = true;
+        endRound();
+    }
+
+    function mpHostNextRound() {
+        mp.phase = 'start';
+        mpBeginRound(round + 1);
+    }
+
+    function mpHostFrame(dt) {
+        if (mp.over) return;
+        if (mp.phase === 'upgrading') {
+            mp.upgradeWait += dt;
+            const others = mpActiveRemotes();
+            const othersReady = others.every(rm => rm.rd >= round);
+            if (mp.readyRound >= round && (othersReady || mp.upgradeWait > UPGRADE_WAIT_LIMIT)) mpHostNextRound();
+        } else if (mp.phase === 'playing' && mp.mode === 'coop') {
+            const anyAlive = !mp.dead || mpActiveRemotes().some(rm => rm.alive);
+            if (!anyAlive) mpHostFinish();
+        }
+    }
+
+    function mpStandings() {
+        const rows = [];
+        const pvp = mp.mode === 'pvp';
+        rows.push({ uid: mp.uid, name: mp.name, color: SLOT_COLORS[mp.slot % 4], kills: pvp ? mpPvpKillsOf(mp.uid) : mp.myKills, lv: player ? player.level : 1, me: true });
+        for (const uid in mp.remotes) {
+            const rm = mp.remotes[uid];
+            rows.push({ uid, name: rm.name, color: rm.color, kills: pvp ? mpPvpKillsOf(uid) : rm.k, lv: rm.lv, me: false });
+        }
+        if (mp.finalRes) {
+            const fixed = {};
+            mp.finalRes.split(',').forEach(p => { const [u, k] = p.split(':'); if (u) fixed[u] = +k; });
+            rows.forEach(r => { if (fixed[r.uid] !== undefined) r.kills = fixed[r.uid]; });
+        }
+        rows.sort((a, b) => b.kills - a.kills);
+        return rows;
+    }
+
+    function mpHostFinish() {
+        mp.phase = 'over';
+        mp.finalRes = mpStandings().map(r => `${r.uid}:${r.kills}`).join(',');
+        mp.forceSend = true; mpSendNow();
+        mpShowOver({ r: round, kills });
+    }
+
+    function mpShowOver(w) {
+        if (mp.over) return;
+        mp.over = true; state = 'gameover'; Audio.play('death');
+        document.getElementById('upgradeScreen').classList.remove('active');
+        document.getElementById('evolutionTreeScreen').classList.remove('active');
+        document.getElementById('pauseMenu').classList.remove('active');
+        mpHideWait();
+        const pvp = mp.mode === 'pvp';
+        const rows = mpStandings();
+        const won = pvp && rows.length > 0 && rows[0].uid === mp.uid && (rows.length < 2 || rows[0].kills > rows[1].kills);
+        document.querySelector('#gameOverScreen .gameover-title').textContent = pvp ? (won ? 'ПОБЕДА' : 'МАТЧ ОКОНЧЕН') : 'КОМАНДА ПОГИБЛА';
+        let html = `<div class="stat-label">${pvp ? 'Раундов сыграно' : 'Раунд'}</div><div class="stat-value">${w.r || round}</div>`;
+        if (!pvp) html += `<div class="stat-label">Убийств командой</div><div class="stat-value">${w.kills || kills}</div>`;
+        rows.forEach((r, i) => {
+            html += `<div class="stat-label"><span class="mp-dot" style="background:${r.color}"></span>${pvp ? (i + 1) + '. ' : ''}${escHtml(r.name)}${r.me ? ' (вы)' : ''}</div><div class="stat-value">${r.kills} ${pvp ? 'убийств' : 'уб.'} · LV ${r.lv}</div>`;
+        });
+        document.getElementById('goStats').innerHTML = html;
+        document.getElementById('goBuild').innerHTML = acquiredUpgrades.map(u => `<span class="build-tag">${escHtml(u.name || u.id)}</span>`).join('');
+        document.getElementById('btnRestart').style.display = 'none';
+        document.getElementById('btnGoMenu').style.display = 'none';
+        document.getElementById('mpOverButtons').classList.remove('hidden');
+        document.getElementById('btnMpLobby').style.display = mp.isHost ? '' : 'none';
+        document.getElementById('mpOverHint').textContent = mp.isHost ? '' : 'Ждём, когда хост вернёт всех в лобби…';
+        document.getElementById('hud').classList.add('hidden');
+        document.getElementById('gameOverScreen').classList.add('active');
+        if (mp.onOver) { try { mp.onOver({ mode: mp.mode, round: w.r || round, kills: rows.find(r => r.me).kills, won }); } catch (e) {} }
+    }
+
+    function mpResetGameOverScreen() {
+        document.querySelector('#gameOverScreen .gameover-title').textContent = 'CYCLE TERMINATED';
+        document.getElementById('btnRestart').style.display = '';
+        document.getElementById('btnGoMenu').style.display = '';
+        document.getElementById('mpOverButtons').classList.add('hidden');
+    }
+
+    function mpOnLocalDeath(killer) {
+        if (mp.dead) return;
+        mp.dead = true; player.hp = 0; Audio.play('death'); Shake.add(8);
+        Particles.emit(player.x, player.y, 40, SLOT_COLORS[mp.slot % 4], { speed: 160, life: 0.6, size: 3 });
+        if (mp.mode === 'pvp') {
+            mp.respawnTimer = 3;
+            if (killer && killer !== mp.uid) mp.kb[killer] = (mp.kb[killer] || 0) + 1;
+        }
+        mp.forceSend = true;
+    }
+
+    function mpUpdateDead(dt) {
+        if (mp.mode !== 'pvp') return;
+        mp.respawnTimer -= dt;
+        if (mp.respawnTimer <= 0) {
+            mp.dead = false; player.hp = player.maxHp; player.shield = player.maxShield; player.invulnTimer = 2;
+            const sp = choose(PVP_SPAWNS); player.x = sp[0]; player.y = sp[1]; player.vx = 0; player.vy = 0;
+            mp.forceSend = true;
+        }
+    }
+
+    function mpShowWait() { document.getElementById('mpWait').classList.remove('hidden'); mpUpdateWait(); }
+    function mpHideWait() { document.getElementById('mpWait').classList.add('hidden'); }
+    function mpUpdateWait() {
+        const others = mpActiveRemotes();
+        const ready = (mp.readyRound >= round ? 1 : 0) + others.filter(rm => rm.rd >= round).length;
+        document.getElementById('mpWaitCount').textContent = `Готовы: ${ready}/${others.length + 1}`;
+    }
+
+    function mpToggleMenu(force) {
+        const el = document.getElementById('pauseMenu');
+        const open = force !== undefined ? force : !el.classList.contains('active');
+        el.classList.toggle('active', open);
+        mp.menuOpen = open;
+    }
+
+    // ---------- ОТПРАВКА ----------
+    function mpNetTick(dt) {
+        mp.sendTimer += dt;
+        if (mp.sendTimer < NET_SEND_INTERVAL && !mp.forceSend) return;
+        mp.sendTimer = 0; mp.forceSend = false;
+        mpSendNow();
+    }
+
+    function mpSendNow() {
+        const p = player;
+        if (!mp || !p) return;
+        const aim = angleBetween(p.x, p.y, mouseGameX, mouseGameY);
+        const s = {
+            mid: mp.matchId, n: mp.name, x: Math.round(p.x), y: Math.round(p.y), a: Math.round(aim * 100) / 100,
+            hp: Math.max(0, Math.ceil(p.hp)), mhp: Math.ceil(p.maxHp), lv: p.level, al: !mp.dead, rd: mp.readyRound, r: round,
+            sz: Math.round(p.size), c: p.evolutionBranch ? UpgradeSystem.evolutionBranches[p.evolutionBranch].color : '',
+            k: mp.myKills, kb: mp.kb, xp: Math.floor(p.xp), ep: evolutionPoints
+        };
+        if (mp.shotsOut.length) { s.sh = mp.shotsOut.join(';'); s.ss = netSeq(); mp.shotsOut = []; }
+        if (mp.buildDirty) { s.b = mp.build.join('|'); mp.buildDirty = false; }
+        mp.net.sendState(s);
+        if (mp.isHost) {
+            const w = { mid: mp.matchId, r: round, ph: mp.phase, t: Math.round(roundTimer * 100) / 100, xp: mp.teamXp, epb: mp.teamEp, kills,
+                boss: bossActive && !bossActive.dead ? `${bossActive.name}|${Math.max(0, Math.ceil(bossActive.hp))}|${Math.ceil(bossActive.maxHp)}` : '' };
+            if (mp.mode === 'coop') w.en = mpEncodeEnemies();
+            if (mp.epOut.length) { w.ep = mp.epOut.join(';'); w.eps = netSeq(); mp.epOut = []; }
+            if (mp.phase === 'over') w.res = mp.finalRes;
+            mp.net.sendWorld(w);
+        } else if (mp.mode === 'coop' && mp.hitsDirty) {
+            mp.hitsDirty = false;
+            const now = performance.now(), parts = [];
+            for (const [id, v] of mp.hitTotals) {
+                if (!mp.proxies.has(id) && now - v.t > 3000) { mp.hitTotals.delete(id); continue; }
+                parts.push(id + ':' + Math.round(v.d * 10) / 10);
+            }
+            mp.net.sendHits({ mid: mp.matchId, h: parts.join(',') });
+        }
+    }
+
+    // ---------- КАДР ----------
+    function mpFrame(dt) {
+        const k = Math.min(1, dt * 12);
+        for (const uid in mp.remotes) {
+            const rm = mp.remotes[uid];
+            if (Math.abs(rm.tx - rm.x) > 300 || Math.abs(rm.ty - rm.y) > 300) { rm.x = rm.tx; rm.y = rm.ty; }
+            else { rm.x += (rm.tx - rm.x) * k; rm.y += (rm.ty - rm.y) * k; }
+        }
+        if (mp.isHost) mpHostFrame(dt);
+        if (!mp) return;
+        mpNetTick(dt);
+        mp.hudTimer -= dt;
+        if (mp.hudTimer <= 0) {
+            mp.hudTimer = 0.2;
+            mpRenderPanel();
+            if (!document.getElementById('mpWait').classList.contains('hidden')) mpUpdateWait();
+            if (!mp.isHost) {
+                const hb = document.getElementById('hudBoss');
+                if (mp.boss) {
+                    const [name, hp, max] = mp.boss.split('|');
+                    hb.style.display = 'block'; document.getElementById('hudBossName').textContent = name;
+                    document.getElementById('hudBossFill').style.width = clamp(+hp / (+max || 1) * 100, 0, 100) + '%';
+                } else hb.style.display = 'none';
+            }
+            if (state !== 'playing') updateHUD();
+        }
+    }
+
+    function mpRenderPanel() {
+        if (!mp) return;
+        const pvp = mp.mode === 'pvp';
+        const rows = [{ name: mp.name, color: SLOT_COLORS[mp.slot % 4], hp: player ? player.hp : 0, mhp: player ? player.maxHp : 1, alive: !mp.dead, lv: player ? player.level : 1, kills: pvp ? mpPvpKillsOf(mp.uid) : mp.myKills, me: true, online: true }];
+        for (const uid in mp.remotes) {
+            const rm = mp.remotes[uid];
+            rows.push({ name: rm.name, color: rm.color, hp: rm.hp, mhp: rm.mhp, alive: rm.alive, lv: rm.lv, kills: pvp ? mpPvpKillsOf(uid) : rm.k, me: false, online: rm.online });
+        }
+        let html = `<div class="mp-panel-title">${pvp ? `PVP · РАУНД ${round}/${PVP_ROUNDS}` : 'КООПЕРАТИВ'}</div>`;
+        for (const r of rows) {
+            const pct = clamp(r.hp / (r.mhp || 1) * 100, 0, 100);
+            html += `<div class="mp-row${r.alive ? '' : ' dead'}${r.online ? '' : ' offline'}"><span class="mp-dot" style="background:${r.color}"></span><span class="mp-name">${escHtml(r.name)}${r.me ? ' (вы)' : ''}</span><span class="mp-lv">LV${r.lv}</span><span class="mp-kills">${r.kills}☠</span>` +
+                `<div class="mp-hp"><div style="width:${r.alive ? pct : 0}%;background:${r.color}"></div></div>${r.online ? '' : '<span class="mp-off">нет связи</span>'}</div>`;
+        }
+        document.getElementById('mpPanel').innerHTML = html;
+    }
+
+    function drawRemotePlayers() {
+        for (const uid in mp.remotes) {
+            const rm = mp.remotes[uid];
+            ctx.save(); ctx.translate(rm.x, rm.y);
+            ctx.globalAlpha = rm.alive ? (rm.online ? 1 : 0.4) : 0.25;
+            ctx.strokeStyle = rm.color; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(0, 0, rm.size + 6, 0, Math.PI * 2); ctx.stroke();
+            ctx.save(); ctx.rotate(rm.a);
+            ctx.fillStyle = rm.formColor || rm.color;
+            ctx.beginPath(); ctx.moveTo(rm.size, 0); ctx.lineTo(-rm.size * 0.6, -rm.size * 0.7); ctx.lineTo(-rm.size * 0.6, rm.size * 0.7); ctx.fill();
+            ctx.restore();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = rm.color; ctx.font = "bold 12px 'Share Tech Mono', monospace"; ctx.textAlign = 'center';
+            ctx.fillText((rm.alive ? '' : '☠ ') + rm.name, 0, -rm.size - 16);
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-18, -rm.size - 12, 36, 4);
+            ctx.fillStyle = rm.color; ctx.fillRect(-18, -rm.size - 12, 36 * clamp(rm.hp / (rm.mhp || 1), 0, 1), 4);
+            ctx.restore();
+        }
+        for (const q of rprojs) { ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill(); }
+    }
+
+    function drawDeadOverlay() {
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, GAME_W, GAME_H);
+        ctx.textAlign = 'center'; ctx.fillStyle = '#ff1744'; ctx.font = "900 46px 'Orbitron', sans-serif";
+        ctx.fillText('ВЫ ПОГИБЛИ', GAME_W / 2, GAME_H / 2 - 10);
+        ctx.fillStyle = '#e0e0e0'; ctx.font = "18px 'Share Tech Mono', monospace";
+        ctx.fillText(mp.mode === 'pvp' ? `Возрождение через ${Math.max(0, mp.respawnTimer).toFixed(1)} с` : 'Вы вернётесь в следующем раунде, если команда выживет', GAME_W / 2, GAME_H / 2 + 30);
+        ctx.restore();
     }
 
     // ============================================================
@@ -926,8 +1577,11 @@ const Game = (() => {
             ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
         }
 
-        if (player && state !== 'gameover') {
+        if (mp) drawRemotePlayers();
+
+        if (player && state !== 'gameover' && !(mp && mp.dead)) {
             ctx.save(); ctx.translate(player.x, player.y);
+            if (mp) { ctx.strokeStyle = SLOT_COLORS[mp.slot % 4]; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, player.size + 6, 0, Math.PI * 2); ctx.stroke(); }
             ctx.strokeStyle = 'rgba(168,85,247,0.06)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, player.pickupRadius, 0, Math.PI * 2); ctx.stroke();
             if (player.pickupRadius > PICKUP_RADIUS_BASE + 10) { ctx.strokeStyle = 'rgba(168,85,247,0.12)'; ctx.stroke(); }
 
@@ -946,6 +1600,7 @@ const Game = (() => {
         }
 
         Particles.draw(ctx); DmgNumbers.draw(ctx);
+        if (mp && mp.dead && player && state !== 'gameover') drawDeadOverlay();
         ctx.restore();
 
     }
@@ -972,13 +1627,24 @@ const Game = (() => {
             shieldBar.style.display = 'block';
             document.getElementById('hudShieldFill').style.width = clamp(player.shield / player.maxShield * 100, 0, 100) + '%';
         } else shieldBar.style.display = 'none';
+        if (bossActive && !bossActive.dead) document.getElementById('hudBossFill').style.width = clamp(bossActive.hp / bossActive.maxHp * 100, 0, 100) + '%';
         const dashEl = document.getElementById('hudDash');
         dashEl.textContent = player.dashTimer > 0 ? `DASH ${player.dashTimer.toFixed(1)}s` : 'DASH READY';
     }
 
     function showGameOver() {
+        mpResetGameOverScreen();
+        const mins = Math.floor(runTime / 60), secs = Math.floor(runTime % 60);
+        document.getElementById('goStats').innerHTML =
+            `<div class="stat-label">Round</div><div class="stat-value">${round}</div>` +
+            `<div class="stat-label">Kills</div><div class="stat-value">${kills}</div>` +
+            `<div class="stat-label">Level</div><div class="stat-value">${player ? player.level : 1}</div>` +
+            `<div class="stat-label">Time</div><div class="stat-value">${mins}:${String(secs).padStart(2, '0')}</div>` +
+            `<div class="stat-label">Best round</div><div class="stat-value">${persistent.bestRound}</div>`;
+        document.getElementById('goBuild').innerHTML = acquiredUpgrades.map(u => `<span class="build-tag">${escHtml(u.name || u.id)}</span>`).join('');
         document.getElementById('hud').classList.add('hidden');
         document.getElementById('gameOverScreen').classList.add('active');
+        if (hooks.onSoloOver) { try { hooks.onSoloOver({ mode: 'solo', round, kills }); } catch (e) {} }
     }
 
     function applySettings() {
@@ -1011,7 +1677,7 @@ const Game = (() => {
     function closeSettings() {
         if (!settingsReturnTo) return;
         document.getElementById('settingsScreen').classList.remove('active');
-        if (settingsReturnTo === 'pause' && state === 'paused') document.getElementById('pauseMenu').classList.add('active');
+        if (settingsReturnTo === 'pause' && (state === 'paused' || mp)) document.getElementById('pauseMenu').classList.add('active');
         else document.getElementById('mainMenu').classList.add('active');
         settingsReturnTo = null; savePersistent();
     }
@@ -1043,6 +1709,7 @@ const Game = (() => {
     }
 
     function resumeGame() {
+        if (mp) { mpToggleMenu(false); return; }
         if (state !== 'paused') return;
         document.getElementById('pauseMenu').classList.remove('active');
         state = 'playing';
@@ -1064,11 +1731,24 @@ const Game = (() => {
         document.getElementById('btnRestart').addEventListener('click', startNewRun);
         document.getElementById('btnResume').addEventListener('click', resumeGame);
         document.getElementById('btnOpenEvoTree').addEventListener('click', openEvolutionTree);
-        document.getElementById('btnGoMenu').addEventListener('click', () => { hideAllScreens(); document.getElementById('mainMenu').classList.add('active'); state = 'menu'; });
-        document.getElementById('btnQuit').addEventListener('click', () => { hideAllScreens(); document.getElementById('hud').classList.add('hidden'); document.getElementById('mainMenu').classList.add('active'); state = 'menu'; });
+        document.getElementById('btnGoMenu').addEventListener('click', () => { if (mp) return; hideAllScreens(); document.getElementById('mainMenu').classList.add('active'); state = 'menu'; });
+        document.getElementById('btnQuit').addEventListener('click', () => {
+            if (mp) { const cb = mp.onQuit; stopOnline(); if (cb) cb(); return; }
+            hideAllScreens(); document.getElementById('hud').classList.add('hidden'); document.getElementById('mainMenu').classList.add('active'); state = 'menu'; });
         lastTime = performance.now(); requestAnimationFrame(loop);
     }
     
     init();
-    return { getPlayer: () => player, getEnemies: () => enemies, getState: () => state, spawnEnemyProjectile: (x, y, vx, vy, damage, color, life, source) => { const p = eProjPool.get(); p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.damage = damage; p.color = color || '#ff4466'; p.life = life || 3; p.size = 4; p.source = source; return p; }, createExplosion, damageEnemy, GAME_W, GAME_H };
+    function spawnEnemyProjectile(x, y, vx, vy, damage, color, life, source) {
+        const p = eProjPool.get(); p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.damage = damage; p.color = color || '#ff4466'; p.life = life || 3; p.size = 4; p.source = source;
+        if (mp && mp.isHost) mpRecordEnemyShot(x, y, vx, vy, damage, p.color, p.life);
+        return p;
+    }
+
+    return {
+        getPlayer: () => aiTarget || player, getEnemies: () => enemies, getState: () => state, spawnEnemyProjectile, createExplosion, damageEnemy, GAME_W, GAME_H,
+        // сетевая игра
+        startOnline, stopOnline, netWorld, netStates, netHits, netPlayers,
+        isOnline: () => !!mp, setHooks: (h) => { hooks = Object.assign(hooks, h || {}); }
+    };
 })();
