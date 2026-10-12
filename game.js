@@ -120,8 +120,7 @@ const Audio = (() => {
 // CONSTANTS & UTILS
 // ============================================================
 const GAME_W = 1200, GAME_H = 800;
-const MIN_ROUND_DURATION = 10;
-const DEFAULT_ROUND_DURATION = 30;
+const DEFAULT_ROUND_DURATION = 30; // every round lasts exactly 30 seconds
 const BOSS_INTERVAL = 5;
 const PLAYER_SIZE = 14;
 const PICKUP_RADIUS_BASE = 120;
@@ -216,7 +215,7 @@ const DmgNumbers = (() => {
         if (!enabled) return;
         const d = pool.get();
         d.x = x + rng(-10, 10); d.y = y - 10;
-        d.text = Math.round(amount).toString();
+        d.text = typeof amount === 'number' ? Math.round(amount).toString() : String(amount);
         d.color = crit ? '#ffd700' : '#ffffff'; d.size = crit ? 16 : 12; d.life = 0.8; d.vy = -60;
     }
     function update(dt) {
@@ -255,7 +254,7 @@ const Game = (() => {
 
     let state = 'menu';
     let round = 1, roundTimer = DEFAULT_ROUND_DURATION, roundDuration = DEFAULT_ROUND_DURATION;
-    let totalTimePenalty = 0, kills = 0, totalKills = 0;
+    let kills = 0, totalKills = 0;
     let totalDamageDealt = 0, totalDamageReceived = 0, runTime = 0;
     let roundStartTimer = 0;
     let scale = 1, offsetX = 0, offsetY = 0;
@@ -335,7 +334,8 @@ const Game = (() => {
         window.addEventListener('keydown', (e) => {
             keys[e.code] = true;
             if (e.code === 'Escape') {
-                if (state === 'playing') pauseGame(); else if (state === 'paused') resumeGame(); else if (state === 'evolutionTree') closeEvolutionTree();
+                if (settingsReturnTo) closeSettings();
+                else if (state === 'playing') pauseGame(); else if (state === 'paused') resumeGame(); else if (state === 'evolutionTree') closeEvolutionTree();
             }
             if (e.code === 'KeyT' && state === 'playing') openEvolutionTree();
             if (state === 'upgrading' && !upgradeSelectionPending) {
@@ -441,12 +441,19 @@ const Game = (() => {
 
         Particles.update(dt); DmgNumbers.update(dt); Shake.update(dt);
 
+        applyLevelUps();
+        updateHUD();
+    }
+
+    function applyLevelUps() {
+        const p = player; if (!p) return;
         while (p.xp >= p.xpToNext) {
             p.xp -= p.xpToNext; p.level++; p.xpToNext = Math.floor(XP_PER_LEVEL_BASE * Math.pow(XP_LEVEL_SCALE, p.level - 1));
             p.maxHp += 5; p.hp = Math.min(p.maxHp, p.hp + 5); p.damage += 1;
             Particles.emit(p.x, p.y, 30, '#a855f7', { speed: 80, life: 0.5 });
+            DmgNumbers.spawn(p.x, p.y - 24, 'LEVEL UP', true);
+            Audio.play('upgrade');
         }
-        updateHUD();
     }
 
     function playerAttack(isBurst = false) {
@@ -773,9 +780,15 @@ const Game = (() => {
             setTimeout(() => { if (state === 'playing' || state === 'roundStart') bossActive = EnemySpawner.spawnBoss(round); }, 2000);
         }
     }
-    function endRound() { state = 'upgrading'; evolutionPoints += 1; showUpgradeScreen(); }
-    function advanceRound(timePenalty) {
-        round++; totalTimePenalty += timePenalty; roundDuration = Math.max(MIN_ROUND_DURATION, DEFAULT_ROUND_DURATION - totalTimePenalty);
+    function endRound() {
+        // Collect every XP orb still on the field so kills at the end of the round are not lost
+        for (const pk of pickups) if (pk.type === 'xp') player.xp += pk.value;
+        pickups = [];
+        applyLevelUps(); updateHUD();
+        state = 'upgrading'; evolutionPoints += 1; showUpgradeScreen();
+    }
+    function advanceRound() {
+        round++; roundDuration = DEFAULT_ROUND_DURATION;
         roundTimer = roundDuration; enemies = enemies.filter(e => !e.dead); startRound();
     }
 
@@ -784,18 +797,16 @@ const Game = (() => {
         const container = document.getElementById('upgradeCards'); container.innerHTML = '';
         document.getElementById('upRound').textContent = round;
         const pEvo = player.evolutionBranch ? { tier: UpgradeSystem.evolutionBranches[player.evolutionBranch].forms.find(f => f.id === player.evolutionForm).tier } : { tier: 0 };
-        const nextBaseTime = DEFAULT_ROUND_DURATION - totalTimePenalty;
         const opts = UpgradeSystem.generateOptions(6, round, acquiredUpgrades, pEvo);
         currentUpgradeOptions = opts;
 
         opts.forEach((up, idx) => {
-            const nextTime = Math.max(MIN_ROUND_DURATION, nextBaseTime - up.timeCost);
             const card = document.createElement('div'); card.className = `upgrade-card ${up.rarity}`;
-            card.innerHTML = `<span class="card-key">[${idx + 1}]</span><div class="card-rarity">${up.rarity}</div><div class="card-name">${up.name}</div><div class="card-category">${up.category}</div><div class="card-desc">${up.description}</div><div class="card-cost">-${up.timeCost}s → Next: ${Math.ceil(nextTime)}s</div>`;
+            card.innerHTML = `<span class="card-key">[${idx + 1}]</span><div class="card-rarity">${up.rarity}</div><div class="card-name">${up.name}</div><div class="card-category">${up.category}</div><div class="card-desc">${up.description}</div>`;
             card.addEventListener('click', () => selectUpgradeByIndex(idx)); container.appendChild(card);
         });
         document.getElementById('btnOpenEvoTree').style.display = 'inline-block';
-        document.getElementById('upNextTime').textContent = Math.ceil(nextBaseTime);
+        document.getElementById('upNextTime').textContent = DEFAULT_ROUND_DURATION;
         document.getElementById('upgradeScreen').classList.add('active');
     }
 
@@ -803,7 +814,7 @@ const Game = (() => {
         if (upgradeSelectionPending || idx < 0 || idx >= currentUpgradeOptions.length) return;
         upgradeSelectionPending = true; const up = currentUpgradeOptions[idx];
         UpgradeSystem.apply(up, player); acquiredUpgrades.push(up);
-        Audio.play('upgrade'); setTimeout(() => { document.getElementById('upgradeScreen').classList.remove('active'); advanceRound(up.timeCost); }, 400);
+        Audio.play('upgrade'); setTimeout(() => { document.getElementById('upgradeScreen').classList.remove('active'); advanceRound(); }, 400);
     }
 
     // ============================================================
@@ -899,6 +910,14 @@ const Game = (() => {
         for (let x = -(performance.now() / 200 % 40); x < GAME_W + 40; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, GAME_H); ctx.stroke(); }
         for (let y = -(performance.now() / 200 % 40); y < GAME_H + 40; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(GAME_W, y); ctx.stroke(); }
 
+        for (const pk of pickups) {
+            const pulse = 1 + Math.sin(performance.now() / 120 + pk.x) * 0.2;
+            ctx.globalAlpha = pk.life < 3 ? clamp(pk.life / 3, 0.2, 1) : 1;
+            ctx.fillStyle = pk.type === 'heal' ? '#22ff88' : '#a855f7';
+            ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.arc(pk.x, pk.y, pk.size * pulse, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        }
         for (const e of enemies) { if (!e.dead) drawEnemy(e); }
         for (const p of projPool.active) {
             ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size, p.y - p.size, p.size * 2, p.size * 2);
@@ -946,6 +965,15 @@ const Game = (() => {
         document.getElementById('hudHealthFill').style.width = clamp(player.hp / player.maxHp * 100, 0, 100) + '%';
         document.getElementById('hudHealthText').textContent = `${Math.ceil(player.hp)}/${player.maxHp}`;
         document.getElementById('hudEP').textContent = `EP: ${evolutionPoints}  [T] TREE`;
+        document.getElementById('hudXpFill').style.width = clamp(player.xp / player.xpToNext * 100, 0, 100) + '%';
+        document.getElementById('hudXpText').textContent = `LV ${player.level}  ${Math.floor(player.xp)}/${player.xpToNext} XP`;
+        const shieldBar = document.getElementById('hudShieldBar');
+        if (player.maxShield > 0) {
+            shieldBar.style.display = 'block';
+            document.getElementById('hudShieldFill').style.width = clamp(player.shield / player.maxShield * 100, 0, 100) + '%';
+        } else shieldBar.style.display = 'none';
+        const dashEl = document.getElementById('hudDash');
+        dashEl.textContent = player.dashTimer > 0 ? `DASH ${player.dashTimer.toFixed(1)}s` : 'DASH READY';
     }
 
     function showGameOver() {
@@ -954,7 +982,56 @@ const Game = (() => {
     }
 
     function applySettings() {
-        const s = persistent.settings; Audio.setMaster(s.masterVol / 100); Audio.setSfx(s.sfxVol / 100);
+        const defaults = defaultPersistent().settings;
+        persistent.settings = Object.assign({}, defaults, persistent.settings || {});
+        const s = persistent.settings;
+        Audio.setMaster(s.masterVol / 100); Audio.setSfx(s.sfxVol / 100);
+        Shake.setEnabled(!!s.shake); DmgNumbers.setEnabled(!!s.dmgNumbers); Particles.setLevel(s.particles);
+        if (!s.dmgNumbers) DmgNumbers.clear();
+    }
+
+    // ---------- SETTINGS SCREEN ----------
+    let settingsReturnTo = null; // 'menu' or 'pause'
+    function syncSettingsUI() {
+        const s = persistent.settings;
+        document.getElementById('volMaster').value = s.masterVol;
+        document.getElementById('volMasterVal').textContent = s.masterVol + '%';
+        document.getElementById('volSfx').value = s.sfxVol;
+        document.getElementById('volSfxVal').textContent = s.sfxVol + '%';
+        document.getElementById('chkShake').checked = !!s.shake;
+        document.getElementById('chkDmgNum').checked = !!s.dmgNumbers;
+        document.getElementById('selParticles').value = s.particles;
+    }
+    function openSettings(from) {
+        settingsReturnTo = from; syncSettingsUI();
+        document.getElementById('mainMenu').classList.remove('active');
+        document.getElementById('pauseMenu').classList.remove('active');
+        document.getElementById('settingsScreen').classList.add('active');
+    }
+    function closeSettings() {
+        if (!settingsReturnTo) return;
+        document.getElementById('settingsScreen').classList.remove('active');
+        if (settingsReturnTo === 'pause' && state === 'paused') document.getElementById('pauseMenu').classList.add('active');
+        else document.getElementById('mainMenu').classList.add('active');
+        settingsReturnTo = null; savePersistent();
+    }
+    function initSettings() {
+        const s = () => persistent.settings;
+        const onChange = () => { applySettings(); savePersistent(); };
+        document.getElementById('volMaster').addEventListener('input', (e) => {
+            s().masterVol = parseInt(e.target.value, 10); document.getElementById('volMasterVal').textContent = s().masterVol + '%'; onChange();
+        });
+        document.getElementById('volSfx').addEventListener('input', (e) => {
+            s().sfxVol = parseInt(e.target.value, 10); document.getElementById('volSfxVal').textContent = s().sfxVol + '%'; onChange();
+        });
+        document.getElementById('volSfx').addEventListener('change', () => Audio.play('hit'));
+        document.getElementById('chkShake').addEventListener('change', (e) => { s().shake = e.target.checked; onChange(); });
+        document.getElementById('chkDmgNum').addEventListener('change', (e) => { s().dmgNumbers = e.target.checked; onChange(); });
+        document.getElementById('selParticles').addEventListener('change', (e) => { s().particles = e.target.value; onChange(); });
+        document.getElementById('btnSettings').addEventListener('click', () => openSettings('menu'));
+        document.getElementById('btnPauseSettings').addEventListener('click', () => openSettings('pause'));
+        document.getElementById('btnSettingsBack').addEventListener('click', closeSettings);
+        syncSettingsUI();
     }
 
     function hideAllScreens() { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); }
@@ -975,13 +1052,13 @@ const Game = (() => {
         hideAllScreens(); player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll();
         pickups = []; acquiredUpgrades = []; evolutionPoints = 0; currentUpgradeOptions = [];
         round = 1; roundDuration = DEFAULT_ROUND_DURATION; roundTimer = roundDuration;
-        totalTimePenalty = 0; kills = 0; runTime = 0; bossActive = null; upgradeSelectionPending = false; state = 'playing';
+        kills = 0; runTime = 0; bossActive = null; upgradeSelectionPending = false; state = 'playing';
 
         document.getElementById('hud').classList.remove('hidden'); startRound();
     }
 
     function init() {
-        resize(); window.addEventListener('resize', resize); initInput(); applySettings();
+        resize(); window.addEventListener('resize', resize); initInput(); applySettings(); initSettings();
         
         document.getElementById('btnPlay').addEventListener('click', startNewRun);
         document.getElementById('btnRestart').addEventListener('click', startNewRun);
