@@ -584,7 +584,7 @@ const UpgradeSystem = (() => {
 
         const availablePool = [...pool];
 
-                for (let i = 0; i < count; i++) {
+        for (let i = 0; i < count; i++) {
             if (availablePool.length === 0) {
                 selected.push({
                     id: 'fill_damage_' + i, name: 'Core Boost', category: 'OFFENSE', rarity: 'common', timeCost: 1,
@@ -593,20 +593,15 @@ const UpgradeSystem = (() => {
                 continue;
             }
 
+            const roll = Math.random() * totalWeight;
             let targetRarity;
-            // CURSED REALITY MODE OVERRIDE
-            if (gameMode === 'cursed') {
-                targetRarity = Math.random() < 0.7 ? 'cursed' : 'legendary';
-            } else {
-                let roll = Math.random() * totalWeight;
-                if (roll < commonWeight) targetRarity = 'common';
-                else if (roll < commonWeight + uncommonWeight) targetRarity = 'uncommon';
-                else if (roll < commonWeight + uncommonWeight + rareWeight) targetRarity = 'rare';
-                else if (roll < commonWeight + uncommonWeight + rareWeight + epicWeight) targetRarity = 'epic';
-                else if (roll < commonWeight + uncommonWeight + rareWeight + epicWeight + legendaryWeight) targetRarity = 'legendary';
-                else if (roll < commonWeight + uncommonWeight + rareWeight + epicWeight + legendaryWeight + mythicWeight) targetRarity = 'mythic';
-                else targetRarity = 'cursed';
-            }
+            if (roll < commonWeight) targetRarity = 'common';
+            else if (roll < commonWeight + uncommonWeight) targetRarity = 'uncommon';
+            else if (roll < commonWeight + uncommonWeight + rareWeight) targetRarity = 'rare';
+            else if (roll < commonWeight + uncommonWeight + rareWeight + epicWeight) targetRarity = 'epic';
+            else if (roll < commonWeight + uncommonWeight + rareWeight + epicWeight + legendaryWeight) targetRarity = 'legendary';
+            else if (roll < commonWeight + uncommonWeight + rareWeight + epicWeight + legendaryWeight + mythicWeight) targetRarity = 'mythic';
+            else targetRarity = 'cursed';
 
             let candidates = availablePool.filter(u => u.rarity === targetRarity);
             if (candidates.length === 0) candidates = [...availablePool];
@@ -616,6 +611,8 @@ const UpgradeSystem = (() => {
             const idx = availablePool.indexOf(chosen);
             if (idx > -1) availablePool.splice(idx, 1);
         }
+
+        return selected;
     }
 
     function apply(upgrade, player) {
