@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>ZERO//30: LAST CYCLE</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -17,9 +17,75 @@
             <p class="subtitle">LAST CYCLE</p>
             <div class="menu-buttons">
                 <button class="menu-btn" id="btnPlay">▶ INITIATE RUN</button>
+                <button class="menu-btn online-btn" id="btnOnline">🌐 ОНЛАЙН</button>
                 <button class="menu-btn" id="btnSettings">⚙ SETTINGS</button>
             </div>
             <p class="version">v2.0 // EVOLUTION BUILD</p>
+        </div>
+    </div>
+
+    <!-- ONLINE: ВХОД -->
+    <div id="onlineAuthScreen" class="screen">
+        <div class="online-card">
+            <h2>🌐 ОНЛАЙН</h2>
+            <p class="online-sub">Вход по логину и паролю — почта не нужна</p>
+            <form id="authForm" class="online-form" autocomplete="on" onsubmit="return false">
+                <input id="authLogin" class="online-input" type="text" placeholder="Логин (латиница, цифры, _)" maxlength="16" autocomplete="username" autocapitalize="off" spellcheck="false">
+                <input id="authPassword" class="online-input" type="password" placeholder="Пароль (от 6 символов)" maxlength="64" autocomplete="current-password">
+                <div id="authError" class="online-error"></div>
+                <button type="button" class="menu-btn big" id="btnAuthLogin">ВОЙТИ</button>
+                <button type="button" class="menu-btn big alt" id="btnAuthRegister">РЕГИСТРАЦИЯ</button>
+                <button type="button" class="menu-btn big ghost" id="btnAuthGuest">ИГРАТЬ КАК ГОСТЬ</button>
+                <button type="button" class="menu-btn big ghost" id="btnAuthBack">◁ НАЗАД</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ONLINE: МЕНЮ -->
+    <div id="onlineMenuScreen" class="screen">
+        <div class="online-card">
+            <h2>🌐 ОНЛАЙН</h2>
+            <div class="online-user">Вы: <b id="omUser">—</b> <span id="omGuestBadge" class="badge hidden">гость</span></div>
+            <div id="omStats" class="online-stats"></div>
+            <div id="omGuestRow" class="online-row hidden">
+                <input id="omGuestName" class="online-input" type="text" placeholder="Ваш ник" maxlength="16" autocapitalize="off" spellcheck="false">
+                <button class="menu-btn small" id="btnGuestName">OK</button>
+            </div>
+            <div class="online-label">Режим новой комнаты</div>
+            <div class="mode-toggle">
+                <button class="mode-btn active" data-mode="coop" id="omModeCoop">🤝 КООПЕРАТИВ</button>
+                <button class="mode-btn" data-mode="pvp" id="omModePvp">⚔ PVP</button>
+            </div>
+            <p id="omModeHint" class="online-sub"></p>
+            <button class="menu-btn big" id="btnCreateRoom">＋ СОЗДАТЬ КОМНАТУ</button>
+            <div class="online-label">Войти по коду</div>
+            <div class="online-row">
+                <input id="omCode" class="online-input code" type="text" placeholder="КОД" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false">
+                <button class="menu-btn small" id="btnJoinRoom">ВОЙТИ</button>
+            </div>
+            <div id="omError" class="online-error"></div>
+            <button class="menu-btn big ghost" id="btnLogout">ВЫЙТИ ИЗ АККАУНТА</button>
+            <button class="menu-btn big ghost" id="btnOnlineBack">◁ НАЗАД</button>
+        </div>
+    </div>
+
+    <!-- ONLINE: ЛОББИ -->
+    <div id="lobbyScreen" class="screen">
+        <div class="online-card">
+            <h2>ЛОББИ</h2>
+            <div class="online-label">Код комнаты (нажмите, чтобы скопировать)</div>
+            <button id="lobbyCode" class="lobby-code">------</button>
+            <div class="mode-toggle">
+                <button class="mode-btn" data-mode="coop" id="lobbyModeCoop">🤝 КООПЕРАТИВ</button>
+                <button class="mode-btn" data-mode="pvp" id="lobbyModePvp">⚔ PVP</button>
+            </div>
+            <p id="lobbyModeHint" class="online-sub"></p>
+            <div class="online-label">Игроки <span id="lobbyCount"></span></div>
+            <div id="lobbyPlayers" class="lobby-players"></div>
+            <p id="lobbyHint" class="online-sub"></p>
+            <div id="lobbyError" class="online-error"></div>
+            <button class="menu-btn big" id="btnLobbyStart">▶ СТАРТ</button>
+            <button class="menu-btn big ghost" id="btnLobbyLeave">✕ ПОКИНУТЬ КОМНАТУ</button>
         </div>
     </div>
 
@@ -65,6 +131,11 @@
             <div id="goBuild" class="go-build"></div>
             <button class="menu-btn" id="btnRestart">⟳ REINITIATE</button>
             <button class="menu-btn" id="btnGoMenu">◁ MAIN MENU</button>
+            <div id="mpOverButtons" class="mp-over-buttons hidden">
+                <button class="menu-btn big" id="btnMpLobby">⟳ ВСЕХ В ЛОББИ</button>
+                <p id="mpOverHint" class="online-sub"></p>
+                <button class="menu-btn big ghost" id="btnMpLeave">✕ ПОКИНУТЬ КОМНАТУ</button>
+            </div>
         </div>
     </div>
 
@@ -98,6 +169,14 @@
                     <option value="low">Low</option>
                 </select>
             </div>
+            <div class="setting-row">
+                <label>Аккаунт</label>
+                <span id="setAccount" class="setting-value">не выполнен вход</span>
+            </div>
+            <div class="setting-row">
+                <label>UID</label>
+                <span id="setUid" class="setting-value uid">—</span>
+            </div>
             <button class="menu-btn" id="btnSettingsBack">◁ BACK</button>
         </div>
     </div>
@@ -127,6 +206,7 @@
         <div class="hud-bottom-right">
             <div class="hud-buffs" id="hudBuffs"></div>
         </div>
+        <div id="mpPanel" class="mp-panel hidden"></div>
         <div class="hud-boss" id="hudBoss" style="display:none">
             <div class="hud-boss-name" id="hudBossName"></div>
             <div class="hud-boss-bar">
@@ -141,8 +221,18 @@
         <div class="round-start-time"><span id="rsTime">30</span> SECONDS</div>
     </div>
 
+    <!-- ONLINE: ожидание игроков после выбора улучшения -->
+    <div id="mpWait" class="mp-wait hidden">
+        <div class="mp-wait-title">ОЖИДАНИЕ ДРУГИХ ИГРОКОВ…</div>
+        <div id="mpWaitCount" class="mp-wait-count"></div>
+    </div>
+    <div id="mpToast" class="mp-toast"></div>
+
     <script src="upgrades.js"></script>
     <script src="enemies.js"></script>
     <script src="game.js"></script>
+    <script src="net-core.js"></script>
+    <script src="online-ui.js"></script>
+    <script type="module" src="net.js"></script>
 </body>
 </html>
