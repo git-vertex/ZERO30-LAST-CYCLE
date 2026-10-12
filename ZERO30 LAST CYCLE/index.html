@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZERO//30: LAST CYCLE</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- MAIN MENU -->
+    <div id="mainMenu" class="screen active">
+        <div class="menu-bg-grid"></div>
+        <div class="menu-content">
+            <h1 class="game-title">ZERO<span class="slash">//</span>30</h1>
+            <p class="subtitle">LAST CYCLE</p>
+            <div class="menu-buttons">
+                <button class="menu-btn" id="btnPlay">▶ INITIATE RUN</button>
+                <!-- ДОБАВИТЬ ЭТИ ДВЕ СТРОЧКИ: -->
+                <button class="menu-btn" id="btnModeSelect" style="border-color: var(--gold); color: var(--gold);">⎈ MODE: STANDARD</button>
+                <p id="modeDesc" class="mode-desc">The classic 30-second loop.</p>
+                <!-- ========================= -->
+                <button class="menu-btn" id="btnCodex">◈ UPGRADE CODEX</button>
+                <button class="menu-btn" id="btnCodex">◈ UPGRADE CODEX</button>
+                <button class="menu-btn" id="btnStats">◧ STATISTICS</button>
+                <button class="menu-btn" id="btnSettings">⚙ SETTINGS</button>
+            </div>
+            <p class="version">v2.0 // EVOLUTION BUILD</p>
+        </div>
+    </div>
+
+    <!-- PAUSE MENU -->
+    <div id="pauseMenu" class="screen">
+        <div class="pause-content">
+            <h2>◫ SYSTEM PAUSED</h2>
+            <button class="menu-btn" id="btnResume">▶ RESUME</button>
+            <button class="menu-btn" id="btnPauseSettings">⚙ SETTINGS</button>
+            <button class="menu-btn" id="btnQuit">✕ QUIT TO MENU</button>
+        </div>
+    </div>
+
+    <!-- UPGRADE SCREEN -->
+    <div id="upgradeScreen" class="screen">
+        <div class="upgrade-header">
+            <h2>◈ SYSTEM UPGRADE DETECTED</h2>
+            <p id="upgradeRoundInfo">Round <span id="upRound">1</span> Complete — Next Duration: <span id="upNextTime">30</span>s</p>
+            <button class="menu-btn evo-btn" id="btnOpenEvoTree" style="display:none;margin-top:0.5rem;">✦ EVOLUTION TREE</button>
+        </div>
+        <div id="upgradeCards" class="upgrade-cards"></div>
+        <p class="upgrade-hint">Press 1-6 or click to select • Press T during combat for Evolution Tree</p>
+    </div>
+
+    <!-- EVOLUTION TREE SCREEN -->
+    <div id="evolutionTreeScreen" class="screen">
+        <div class="evo-tree-container">
+            <div class="evo-tree-header">
+                <h2>✦ EVOLUTION TREE</h2>
+                <div class="evo-points-display">EVOLUTION POINTS: <span id="evoPoints">0</span></div>
+                <p class="evo-tree-subtitle">Choose ONE primary branch per run. Click an unlocked form to evolve.</p>
+            </div>
+            <div id="evoTreeContent" class="evo-tree-content"></div>
+            <button class="menu-btn" id="btnEvoClose">◁ CLOSE</button>
+        </div>
+    </div>
+
+    <!-- GAME OVER -->
+    <div id="gameOverScreen" class="screen">
+        <div class="gameover-content">
+            <h1 class="gameover-title">CYCLE TERMINATED</h1>
+            <div id="goStats" class="go-stats"></div>
+            <div id="goBuild" class="go-build"></div>
+            <button class="menu-btn" id="btnRestart">⟳ REINITIATE</button>
+            <button class="menu-btn" id="btnGoMenu">◁ MAIN MENU</button>
+        </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="settingsScreen" class="screen">
+        <div class="settings-content">
+            <h2>⚙ CONFIGURATION</h2>
+            <div class="setting-row">
+                <label>Master Volume</label>
+                <input type="range" id="volMaster" min="0" max="100" value="70">
+                <span id="volMasterVal">70%</span>
+            </div>
+            <div class="setting-row">
+                <label>SFX Volume</label>
+                <input type="range" id="volSfx" min="0" max="100" value="80">
+                <span id="volSfxVal">80%</span>
+            </div>
+            <div class="setting-row">
+                <label>Screen Shake</label>
+                <input type="checkbox" id="chkShake" checked>
+            </div>
+            <div class="setting-row">
+                <label>Damage Numbers</label>
+                <input type="checkbox" id="chkDmgNum" checked>
+            </div>
+            <div class="setting-row">
+                <label>Particles</label>
+                <select id="selParticles">
+                    <option value="high">High</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            <button class="menu-btn" id="btnSettingsBack">◁ BACK</button>
+        </div>
+    </div>
+
+    <!-- CODEX -->
+    <div id="codexScreen" class="screen">
+        <div class="codex-content">
+            <h2>◈ UPGRADE CODEX</h2>
+            <div id="codexList" class="codex-list"></div>
+            <button class="menu-btn" id="btnCodexBack">◁ BACK</button>
+        </div>
+    </div>
+
+    <!-- STATS -->
+    <div id="statsScreen" class="screen">
+        <div class="stats-content">
+            <h2>◧ CAREER STATISTICS</h2>
+            <div id="statsList" class="stats-list"></div>
+            <button class="menu-btn" id="btnStatsBack">◁ BACK</button>
+        </div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="hud hidden">
+        <div class="hud-top">
+            <div class="hud-round">ROUND <span id="hudRound">1</span></div>
+            <div class="hud-timer" id="hudTimer">30.00</div>
+            <div class="hud-kills">KILLS: <span id="hudKills">0</span></div>
+        </div>
+        <div class="hud-bottom-left">
+            <div class="hud-health-bar">
+                <div class="hud-health-fill" id="hudHealthFill"></div>
+                <div class="hud-health-text" id="hudHealthText">100/100</div>
+            </div>
+            <div class="hud-shield-bar" id="hudShieldBar" style="display:none">
+                <div class="hud-shield-fill" id="hudShieldFill"></div>
+            </div>
+            <div class="hud-xp-bar">
+                <div class="hud-xp-fill" id="hudXpFill"></div>
+                <div class="hud-xp-text" id="hudXpText">LV 1</div>
+            </div>
+            <div class="hud-dash" id="hudDash">DASH READY</div>
+            <div class="hud-ep" id="hudEP">EP: 0  [T] TREE</div>
+        </div>
+        <div class="hud-bottom-right">
+            <div class="hud-buffs" id="hudBuffs"></div>
+        </div>
+        <div class="hud-boss" id="hudBoss" style="display:none">
+            <div class="hud-boss-name" id="hudBossName"></div>
+            <div class="hud-boss-bar">
+                <div class="hud-boss-fill" id="hudBossFill"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROUND START -->
+    <div id="roundStart" class="round-start hidden">
+        <div class="round-start-text">ROUND <span id="rsRound">1</span></div>
+        <div class="round-start-time"><span id="rsTime">30</span> SECONDS</div>
+    </div>
+
+    <script src="upgrades.js"></script>
+    <script src="enemies.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
