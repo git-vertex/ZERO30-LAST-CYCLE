@@ -1,20 +1,5 @@
-// ZERO//30: LAST CYCLE — Main Game Module with MODES
+// ZERO//30: LAST CYCLE — Main Game Module
 'use strict';
-
-// ============================================================
-// GAME MODES CONFIGURATION
-// ============================================================
-const GAME_MODES = [
-    { id: 'standard', name: 'STANDARD CYCLE', desc: 'The classic 30-second loop.' },
-    { id: 'sudden_death', name: 'SUDDEN DEATH', desc: '1 HP. No shields. +100% Damage. +30% Speed. Extreme survival.' },
-    { id: 'pitch_black', name: 'PITCH BLACK', desc: 'Sensors blinded. Visibility restricted to a small aura around the player.' },
-    { id: 'overclocked', name: 'OVERCLOCKED', desc: 'Game simulation runs 50% faster. Brutal reflexes required.' },
-    { id: 'boss_rush', name: 'BOSS RUSH', desc: 'Every round is a Boss. No normal waves. Killing the boss ends the round immediately.' },
-    { id: 'pacifist', name: 'PACIFIST', desc: 'Primary weapons disabled. Enemies passively decay over time. Just dodge.' },
-    { id: 'cursed', name: 'CURSED REALITY', desc: 'Draft pool is 100% CURSED and LEGENDARY cards. Pure chaos.' },
-    { id: 'vampire', name: 'VAMPIRE', desc: 'Health constantly drains over time (-5 HP/s). Extreme lifesteal on kills.' },
-    { id: 'nightmare', name: 'NIGHTMARE', desc: 'Enemies have +50% all stats. You start with 3 random Legendary upgrades.' }
-];
 
 // ============================================================
 // AUDIO
@@ -269,7 +254,6 @@ const Game = (() => {
     const ctx = canvas.getContext('2d');
 
     let state = 'menu';
-    let currentModeIndex = 0;
     let round = 1, roundTimer = DEFAULT_ROUND_DURATION, roundDuration = DEFAULT_ROUND_DURATION;
     let totalTimePenalty = 0, kills = 0, totalKills = 0;
     let totalDamageDealt = 0, totalDamageReceived = 0, runTime = 0;
@@ -277,6 +261,7 @@ const Game = (() => {
     let scale = 1, offsetX = 0, offsetY = 0;
     let mouseX = GAME_W / 2, mouseY = GAME_H / 2, mouseGameX = GAME_W / 2, mouseGameY = GAME_H / 2;
     let lastTime = 0, bossActive = null, upgradeSelectionPending = false;
+    let currentUpgradeOptions = [];
     const keys = {};
 
     let player = null;
@@ -367,10 +352,9 @@ const Game = (() => {
     }
 
     function loop(time) {
-        let dt = Math.min((time - lastTime) / 1000, 0.05);
+        const dt = Math.min(Math.max((time - lastTime) / 1000, 0), 0.05);
         lastTime = time;
         if (state === 'playing') {
-            if (GAME_MODES[currentModeIndex].id === 'overclocked') dt *= 1.5;
             update(dt);
         }
         else if (state === 'roundStart') {
@@ -387,11 +371,10 @@ const Game = (() => {
 
     function update(dt) {
         const p = player;
-        const mode = GAME_MODES[currentModeIndex].id;
         if (!p) return;
         runTime += dt;
-        roundTimer -= dt;
-        if (roundTimer <= 0 && mode !== 'boss_rush') { roundTimer = 0; endRound(); return; }
+        roundTimer = Math.max(0, roundTimer - dt);
+        if (roundTimer === 0) { endRound(); return; }
 
         let mx = 0, my = 0;
         if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
@@ -425,26 +408,22 @@ const Game = (() => {
         if (p.maxShield > 0 && p.shield < p.maxShield) p.shield = Math.min(p.maxShield, p.shield + p.maxShield * 0.05 * dt);
 
         // Attacks
-        if (mode === 'pacifist') {
-            p.attackSpeed = 0; p.burstFire = 0; p.circularBurst = false; p.radialBarrage = false;
-        } else {
-            p.attackTimer += dt;
-            let effectiveAtkSpeed = p.attackSpeed;
-            if (p.momentumEnabled) effectiveAtkSpeed *= (1 + Math.min(0.4, p.momentumStacks * 0.04));
-            if (p.killAtkSpeed > 0 && p.killAtkSpeedTimer > 0) effectiveAtkSpeed *= (1 + p.killAtkSpeed);
-            if (p.ascendantActive > 0) effectiveAtkSpeed *= 1.5;
-            if (effectiveAtkSpeed > 0) {
-                const attackInterval = 1 / effectiveAtkSpeed;
-                if (p.attackTimer >= attackInterval) {
-                    p.attackTimer -= attackInterval;
-                    if (p.burstFire > 0) { p.burstFireCount = p.burstFire; p.burstFireTimer = 0; }
-                    playerAttack();
-                }
+        p.attackTimer += dt;
+        let effectiveAtkSpeed = p.attackSpeed;
+        if (p.momentumEnabled) effectiveAtkSpeed *= (1 + Math.min(0.4, p.momentumStacks * 0.04));
+        if (p.killAtkSpeed > 0 && p.killAtkSpeedTimer > 0) effectiveAtkSpeed *= (1 + p.killAtkSpeed);
+        if (p.ascendantActive > 0) effectiveAtkSpeed *= 1.5;
+        if (effectiveAtkSpeed > 0) {
+            const attackInterval = 1 / effectiveAtkSpeed;
+            if (p.attackTimer >= attackInterval) {
+                p.attackTimer -= attackInterval;
+                if (p.burstFire > 0) { p.burstFireCount = p.burstFire; p.burstFireTimer = 0; }
+                playerAttack();
             }
-            if (p.burstFireCount > 0) {
-                p.burstFireTimer += dt;
-                if (p.burstFireTimer >= 0.08) { p.burstFireTimer = 0; p.burstFireCount--; playerAttack(true); }
-            }
+        }
+        if (p.burstFireCount > 0) {
+            p.burstFireTimer += dt;
+            if (p.burstFireTimer >= 0.08) { p.burstFireTimer = 0; p.burstFireCount--; playerAttack(true); }
         }
 
         if (p.afterimages && (Math.abs(p.vx) > 50 || Math.abs(p.vy) > 50)) p.dashTrail.push({ x: p.x, y: p.y, life: 0.3 });
@@ -705,7 +684,6 @@ const Game = (() => {
     function updateEnemies(dt) {
         for (let i = enemies.length - 1; i >= 0; i--) {
             const e = enemies[i]; if (e.dead) { enemies.splice(i, 1); continue; }
-            if (GAME_MODES[currentModeIndex].id === 'pacifist') e.hp -= (15 + round * 5) * dt;
             if (e.hp <= 0) { killEnemy(e); continue; }
             e.flashTimer = Math.max(0, (e.flashTimer || 0) - dt);
             if (e.behavior) e.behavior(e, dt, 1 * (player.timeDialation || 1));
@@ -735,7 +713,6 @@ const Game = (() => {
             Particles.emit(bossActive.x, bossActive.y, 50, '#ffd700', { speed: 150, life: 0.5, size: 3 });
             document.getElementById('hudBoss').style.display = 'none';
             bossActive = null;
-            if (GAME_MODES[currentModeIndex].id === 'boss_rush') roundTimer = 0; // End immediately
         }
     }
 
@@ -763,10 +740,6 @@ const Game = (() => {
     const EnemySpawner = (() => {
         let spawnTimer = 0;
         function update(dt, currentRound, bossActive) {
-            if (GAME_MODES[currentModeIndex].id === 'boss_rush') {
-                if (!bossActive) Game.bossActive = spawnBoss(currentRound);
-                return;
-            }
             if (bossActive) return;
             spawnTimer += dt;
             const spawnRate = Math.max(0.8, 3 - currentRound * 0.15);
@@ -796,7 +769,7 @@ const Game = (() => {
         document.getElementById('roundStart').classList.remove('hidden'); document.getElementById('roundStart').classList.add('visible');
         document.getElementById('rsRound').textContent = round; document.getElementById('rsTime').textContent = Math.ceil(roundDuration);
         EnemySpawner.reset();
-        if (round > 1 && round % BOSS_INTERVAL === 0 && GAME_MODES[currentModeIndex].id !== 'boss_rush') {
+        if (round > 1 && round % BOSS_INTERVAL === 0) {
             setTimeout(() => { if (state === 'playing' || state === 'roundStart') bossActive = EnemySpawner.spawnBoss(round); }, 2000);
         }
     }
@@ -810,10 +783,9 @@ const Game = (() => {
         upgradeSelectionPending = false;
         const container = document.getElementById('upgradeCards'); container.innerHTML = '';
         document.getElementById('upRound').textContent = round;
-        const mode = GAME_MODES[currentModeIndex].id;
         const pEvo = player.evolutionBranch ? { tier: UpgradeSystem.evolutionBranches[player.evolutionBranch].forms.find(f => f.id === player.evolutionForm).tier } : { tier: 0 };
         const nextBaseTime = DEFAULT_ROUND_DURATION - totalTimePenalty;
-        const opts = UpgradeSystem.generateOptions(6, round, acquiredUpgrades, pEvo, mode);
+        const opts = UpgradeSystem.generateOptions(6, round, acquiredUpgrades, pEvo);
         currentUpgradeOptions = opts;
 
         opts.forEach((up, idx) => {
@@ -957,14 +929,6 @@ const Game = (() => {
         Particles.draw(ctx); DmgNumbers.draw(ctx);
         ctx.restore();
 
-        // PITCH BLACK OVERLAY
-        if (GAME_MODES[currentModeIndex].id === 'pitch_black' && player && state === 'playing') {
-            const grad = ctx.createRadialGradient(player.x * scale + offsetX, player.y * scale + offsetY, 50 * scale, player.x * scale + offsetX, player.y * scale + offsetY, 300 * scale);
-            grad.addColorStop(0, 'rgba(0,0,0,0)');
-            grad.addColorStop(1, 'rgba(0,0,0,0.98)');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
     }
 
     function drawEnemy(e) {
@@ -995,20 +959,23 @@ const Game = (() => {
 
     function hideAllScreens() { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); }
 
+    function pauseGame() {
+        if (state !== 'playing') return;
+        state = 'paused';
+        document.getElementById('pauseMenu').classList.add('active');
+    }
+
+    function resumeGame() {
+        if (state !== 'paused') return;
+        document.getElementById('pauseMenu').classList.remove('active');
+        state = 'playing';
+    }
+
     function startNewRun() {
         hideAllScreens(); player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll();
-        pickups = []; acquiredUpgrades = []; evolutionPoints = 0; round = 1; roundTimer = DEFAULT_ROUND_DURATION;
-        totalTimePenalty = 0; kills = 0; runTime = 0; state = 'playing';
-
-        const mode = GAME_MODES[currentModeIndex].id;
-        if (mode === 'sudden_death') { player.maxHp = 1; player.hp = 1; player.damage *= 2; player.speed *= 1.3; }
-        if (mode === 'vampire') { player.regen = -5; player.killHeal += 5; }
-        if (mode === 'nightmare') {
-            for (let i = 0; i < 3; i++) {
-                const leg = UpgradeSystem.getAllUpgrades().filter(u => u.rarity === 'legendary');
-                UpgradeSystem.apply(choose(leg), player);
-            }
-        }
+        pickups = []; acquiredUpgrades = []; evolutionPoints = 0; currentUpgradeOptions = [];
+        round = 1; roundDuration = DEFAULT_ROUND_DURATION; roundTimer = roundDuration;
+        totalTimePenalty = 0; kills = 0; runTime = 0; bossActive = null; upgradeSelectionPending = false; state = 'playing';
 
         document.getElementById('hud').classList.remove('hidden'); startRound();
     }
@@ -1016,21 +983,15 @@ const Game = (() => {
     function init() {
         resize(); window.addEventListener('resize', resize); initInput(); applySettings();
         
-        // Mode selector
-        const btnMode = document.getElementById('btnModeSelect');
-        const descMode = document.getElementById('modeDesc');
-        btnMode.addEventListener('click', () => {
-            currentModeIndex = (currentModeIndex + 1) % GAME_MODES.length;
-            btnMode.textContent = '⎈ MODE: ' + GAME_MODES[currentModeIndex].name;
-            descMode.textContent = GAME_MODES[currentModeIndex].desc;
-        });
-
         document.getElementById('btnPlay').addEventListener('click', startNewRun);
         document.getElementById('btnRestart').addEventListener('click', startNewRun);
+        document.getElementById('btnResume').addEventListener('click', resumeGame);
+        document.getElementById('btnOpenEvoTree').addEventListener('click', openEvolutionTree);
         document.getElementById('btnGoMenu').addEventListener('click', () => { hideAllScreens(); document.getElementById('mainMenu').classList.add('active'); state = 'menu'; });
+        document.getElementById('btnQuit').addEventListener('click', () => { hideAllScreens(); document.getElementById('hud').classList.add('hidden'); document.getElementById('mainMenu').classList.add('active'); state = 'menu'; });
         lastTime = performance.now(); requestAnimationFrame(loop);
     }
     
     init();
-    return { getPlayer: () => player, getEnemies: () => enemies, getState: () => state, getMode: () => GAME_MODES[currentModeIndex].id, spawnEnemyProjectile: (x, y, vx, vy, damage, color, life, source) => { const p = eProjPool.get(); p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.damage = damage; p.color = color || '#ff4466'; p.life = life || 3; p.size = 4; p.source = source; return p; }, createExplosion, damageEnemy, GAME_W, GAME_H };
+    return { getPlayer: () => player, getEnemies: () => enemies, getState: () => state, spawnEnemyProjectile: (x, y, vx, vy, damage, color, life, source) => { const p = eProjPool.get(); p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.damage = damage; p.color = color || '#ff4466'; p.life = life || 3; p.size = 4; p.source = source; return p; }, createExplosion, damageEnemy, GAME_W, GAME_H };
 })();

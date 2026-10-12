@@ -375,9 +375,7 @@ const EnemyTypes = (() => {
         
         const template = TYPES[typeName];
         if (!template) return create('glitcher', currentRound);
-        const mode = typeof Game !== 'undefined' ? Game.getMode() : 'standard';
-        const nightmareScale = mode === 'nightmare' ? 1.5 : 1;
-        const scaling = (1 + (currentRound - 1) * 0.12) * nightmareScale;0.12;
+        const scaling = 1 + (currentRound - 1) * 0.12;
         const e = {
             x: 0, y: 0,
             hp: Math.floor(template.hp * scaling),
@@ -414,9 +412,7 @@ const EnemyTypes = (() => {
 
     function createBoss(currentRound) {
         const bossIndex = Math.floor((currentRound / BOSS_INTERVAL) - 1) % 4;
-        const mode = typeof Game !== 'undefined' ? Game.getMode() : 'standard';
-        const nightmareScale = mode === 'nightmare' ? 1.5 : 1;
-        const scaling = (1 + (currentRound - 1) * 0.12) * nightmareScale;
+        const scaling = 1 + (currentRound - 1) * 0.12;
         const bossDefs = [
             { name: 'THE COMPILER', hp: 400, size: 30, color: '#ff4466', shape: 'boss',
               contactDmg: 25, xpValue: 50, behavior: compilerBehavior },
