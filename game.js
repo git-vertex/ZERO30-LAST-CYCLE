@@ -131,6 +131,13 @@ const XP_LEVEL_SCALE = 1.25;
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
 function dist(x1, y1, x2, y2) { const dx = x1 - x2, dy = y1 - y2; return Math.sqrt(dx * dx + dy * dy); }
+// расстояние от точки (px, py) до отрезка (ax, ay)-(bx, by)
+function segDist(px, py, ax, ay, bx, by) {
+    const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+    let t = l2 > 0 ? ((px - ax) * vx + (py - ay) * vy) / l2 : 0;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return dist(px, py, ax + vx * t, ay + vy * t);
+}
 function angleBetween(x1, y1, x2, y2) { return Math.atan2(y2 - y1, x2 - x1); }
 function rng(min, max) { return Math.random() * (max - min) + min; }
 function rngInt(min, max) { return Math.floor(rng(min, max + 1)); }
@@ -302,7 +309,7 @@ const Game = (() => {
             invulnTimer: 0, regen: 0, regenTimer: 0, dmgReduction: 0, reflectChance: 0,
             xpMult: 1, healMult: 1, bonusBossDmg: 0, executeDmg: 0, lifesteal: 0, killHeal: 0,
             orbitalBlades: 0, orbitalDamage: 8, droneCount: 0, droneDmgMult: 1,
-            beamWeapon: false, beamDamage: 0, timeDialation: 1, afterimages: false,
+            beamWeapon: false, beamDamage: 0, beamMult: 0.7, timeDialation: 1, afterimages: false,
             emergencySurvival: false, emergencyUsed: false,
             rearShieldLevel: 0, rearShieldHitFlash: 0,
             evolutionBranch: null, evolutionForm: 'core', evolutionShape: 'core',
@@ -317,7 +324,7 @@ const Game = (() => {
                  voidDmg: 0, crit: false, startX: 0, startY: 0, returning: false, returnTimer: 0,
                  trail: false, trailDmg: 0, duplicateChance: 0, split: false, isSplit: false,
                  isCenter: false, isPhantom: false, isReflected: false, pierceOnReflect: false }),
-        (p) => { p.life = 0; p.hit = null; p.returning = false; }, 300
+        (p) => { p.life = 0; p.hit = null; p.returning = false; p.beam = false; p.isPhantom = false; }, 300
     );
 
     const eProjPool = new Pool(
@@ -423,7 +430,7 @@ const Game = (() => {
             move: { id: null, ox: 0, oy: 0, vx: 0, vy: 0, mag: 0, el: null, knob: null },
             aim:  { id: null, ox: 0, oy: 0, vx: 0, vy: 0, mag: 0, el: null, knob: null }
         };
-        const api = { lastTouchAt: -1e9, init, setMode, sync, move: sticks.move, aim: sticks.aim, applyAim, takeDash, goFullscreen, get enabled() { return enabled; } };
+        const api = { lastTouchAt: -1e9, init, setMode, sync, move: sticks.move, aim: sticks.aim, applyAim, takeDash, goFullscreen, get enabled() { return enabled; }, get target() { return sticks.aim.id === null && targetAlive(autoTarget) ? autoTarget : null; } };
 
         function init() {
             layer = document.getElementById('touchLayer');
@@ -550,15 +557,46 @@ const Game = (() => {
         }
         function releaseAll() { release(sticks.move); release(sticks.aim); }
 
-        // Куда стрелять: пока правый джойстик зажат — по нему.
-        // Отпустили — автонаведение на ближайшего врага, а если рядом никого — в последнем направлении.
+        // Куда стрелять:
+        //  - правый джойстик зажат: строго туда, куда он показывает;
+        //  - иначе автонаводка: ближайший враг (в PvP - соперник) в радиусе AUTO_RANGE, цель держится, пока жива и в зоне;
+        //  - целей нет: по направлению движения левого стика, а если стоим - в последнем направлении.
+        const AUTO_RANGE = 620, AUTO_KEEP = 700;
+        let autoTarget = null;
+        // цель жива и всё ещё в игре (враг мог исчезнуть из списка при новом забеге, игрок - выйти)
+        function targetAlive(t) {
+            if (!t) return false;
+            if (t.uid) return !!(mp && mp.remotes[t.uid] === t && t.alive && t.online);
+            return !t.dead && enemies.includes(t);
+        }
+        function findTarget(p) {
+            let best = null, bd = AUTO_RANGE;
+            if (mp && mp.mode === 'pvp') {
+                for (const rm of mpActiveRemotes()) { const d = dist(p.x, p.y, rm.x, rm.y); if (d < bd) { bd = d; best = rm; } }
+                return best;
+            }
+            for (const e of enemies) {
+                if (e.dead) continue;
+                // боссу и тем, кто близко, приоритет: «расстояние» уменьшаем
+                const d = dist(p.x, p.y, e.x, e.y) * (e.isBoss ? 0.75 : 1);
+                if (d < bd) { bd = d; best = e; }
+            }
+            return best;
+        }
         function applyAim(p) {
             if (!enabled || !p) return;
-            if (sticks.aim.id === null) {
-                for (const e of enemies) {
-                    if (!e.dead && dist(p.x, p.y, e.x, e.y) < 300) { mouseGameX = p.x; mouseGameY = p.y; return; }
-                }
+            if (sticks.aim.id !== null) { autoTarget = null; mouseGameX = p.x + aimDir.x * 150; mouseGameY = p.y + aimDir.y * 150; return; }
+            // текущую цель не меняем на соседнюю каждый кадр, иначе прицел дёргается между двумя врагами
+            if (!targetAlive(autoTarget) || dist(p.x, p.y, autoTarget.x, autoTarget.y) > AUTO_KEEP) autoTarget = null;
+            const fresh = findTarget(p);
+            if (fresh && (!autoTarget || dist(p.x, p.y, fresh.x, fresh.y) < dist(p.x, p.y, autoTarget.x, autoTarget.y) * 0.7)) autoTarget = fresh;
+            if (autoTarget) {
+                const l = dist(p.x, p.y, autoTarget.x, autoTarget.y) || 1;
+                aimDir = { x: (autoTarget.x - p.x) / l, y: (autoTarget.y - p.y) / l };
+                mouseGameX = autoTarget.x; mouseGameY = autoTarget.y;
+                return;
             }
+            if (sticks.move.mag > 0.2) { const l = Math.sqrt(sticks.move.vx * sticks.move.vx + sticks.move.vy * sticks.move.vy) || 1; aimDir = { x: sticks.move.vx / l, y: sticks.move.vy / l }; }
             mouseGameX = p.x + aimDir.x * 150; mouseGameY = p.y + aimDir.y * 150;
         }
         return api;
@@ -709,7 +747,6 @@ const Game = (() => {
         let dmgMult = 1;
         if (p.heavyShotEnabled) { p.heavyShotCounter++; if (p.heavyShotCounter >= 5) { p.heavyShotCounter = 0; dmgMult = 3; } }
         if (p.spiralShot) { p.spiralAngle += 0.3; fireAngle += Math.sin(p.spiralAngle) * 0.5; }
-        if (p.beamWeapon) { fireBeam(fireAngle); return; }
 
         let totalCount = p.projCount + (p.infiniteMag ? p.infiniteMagStacks : 0);
         let ox = 0, oy = 0;
@@ -748,11 +785,15 @@ const Game = (() => {
         proj.hit = new Set(); proj.color = crit ? '#ffd700' : '#00f0ff'; proj.chainLightning = p.chainLightning;
         proj.fire = Math.random() < p.fireChance; proj.ice = Math.random() < p.iceChance; proj.poison = Math.random() < p.poisonChance;
         proj.voidDmg = p.voidDamage; proj.crit = crit; proj.trail = p.projTrail; proj.trailDmg = p.projTrailDmg;
-        proj.split = p.projSplit; proj.isSplit = false; proj.isReflected = false;
+        proj.split = p.projSplit; proj.isSplit = false; proj.isReflected = false; proj.isPhantom = false; proj.beam = false;
+        // Beam Emitter: выстрел превращается в быстрый лазер, который прошивает всех врагов на пути без потери урона
+        if (p.beamWeapon) {
+            proj.beam = true; proj.pierce += 999; proj.vx *= 2.2; proj.vy *= 2.2; proj.life = 0.45;
+            proj.damage *= (p.beamMult || 0.7); if (!crit) proj.color = '#7ff8ff';
+        }
         if (mp) mpRecordShot(proj);
     }
 
-    function fireBeam(angle) { beams.push({ x: player.x, y: player.y, angle: angle, length: 500, damage: player.beamDamage || player.damage * 0.3, width: 6, life: 0.1, color: '#00f0ff', hit: new Set() }); }
 
     function performDash() {
         const p = player; let angle = (Math.abs(p.vx) > 10 || Math.abs(p.vy) > 10) ? Math.atan2(p.vy, p.vx) : angleBetween(p.x, p.y, mouseGameX, mouseGameY);
@@ -785,12 +826,14 @@ const Game = (() => {
                     proj.vx = Math.cos(current + turn) * spd; proj.vy = Math.sin(current + turn) * spd;
                 }
             }
+            const sx = proj.x, sy = proj.y;
             proj.x += proj.vx * dt; proj.y += proj.vy * dt; proj.life -= dt;
             if (proj.x < -20 || proj.x > GAME_W + 20 || proj.y < -20 || proj.y > GAME_H + 20) return true;
 
             for (let i = enemies.length - 1; i >= 0; i--) {
                 const e = enemies[i]; if (e.dead || proj.hit.has(e)) continue;
-                if (dist(proj.x, proj.y, e.x, e.y) < proj.size + e.size) {
+                // попадание проверяем по всему отрезку полёта за кадр: быстрые снаряды и лазер не пролетают сквозь врагов
+                if (segDist(e.x, e.y, sx, sy, proj.x, proj.y) < proj.size + e.size) {
                     proj.hit.add(e); let dmg = proj.damage;
                     if (player.closeRangeBonus > 0 && dist(player.x, player.y, e.x, e.y) < 150) dmg *= (1 + player.closeRangeBonus);
                     if (player.longRangeBonus > 0 && dist(player.x, player.y, e.x, e.y) > 400) dmg *= (1 + player.longRangeBonus);
@@ -814,7 +857,7 @@ const Game = (() => {
                         }
                     }
                     if (proj.explosive) { createExplosion(proj.x, proj.y, proj.explosionRadius || 50, proj.damage * 0.5); return true; }
-                    if (proj.pierce > 0) { proj.pierce--; proj.damage *= 0.8; continue; }
+                    if (proj.pierce > 0) { proj.pierce--; if (!proj.beam) proj.damage *= 0.8; continue; }
                     if (proj.ricochet > 0) {
                         proj.ricochet--; let nextTarget = null, minD = 200;
                         for (const e2 of enemies) if (!proj.hit.has(e2) && !e2.dead && dist(proj.x, proj.y, e2.x, e2.y) < minD) { minD = dist(proj.x, proj.y, e2.x, e2.y); nextTarget = e2; }
@@ -938,7 +981,10 @@ const Game = (() => {
         persistent.totalKillsAll += kills; persistent.totalTimeAll += runTime; savePersistent(); showGameOver();
     }
 
-    function updateOrbitals(dt) {} function updateDrones(dt) {} function updateBeams(dt) {} function updateBlackHoles(dt) {}
+    function updateOrbitals(dt) {} function updateDrones(dt) {} function updateBeams(dt) {
+        for (let i = beams.length - 1; i >= 0; i--) { beams[i].life -= dt; if (beams[i].life <= 0) beams.splice(i, 1); }
+        if (beams.length > 200) beams.splice(0, beams.length - 200);
+    } function updateBlackHoles(dt) {}
     
     function updateEnemies(dt) {
         for (let i = enemies.length - 1; i >= 0; i--) {
@@ -1207,7 +1253,7 @@ const Game = (() => {
             lastSent: {}, lastWorldSent: {}, eiSent: new Set(),
             menuOpen: false, over: false, hudTimer: 0, boss: '', finalRes: ''
         };
-        player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll(); rprojs = [];
+        player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll(); rprojs = []; beams = [];
         pickups = []; acquiredUpgrades = []; evolutionPoints = 0; currentUpgradeOptions = [];
         round = 1; roundDuration = DEFAULT_ROUND_DURATION; roundTimer = roundDuration;
         kills = 0; runTime = 0; totalDamageDealt = 0; totalDamageReceived = 0; bossActive = null; upgradeSelectionPending = false;
@@ -1279,7 +1325,7 @@ const Game = (() => {
     function stopOnline() {
         if (!mp) return;
         mp = null; aiTarget = null; hitOwner = null; rprojs = [];
-        enemies = []; pickups = []; projPool.releaseAll(); eProjPool.releaseAll(); Particles.clear(); DmgNumbers.clear();
+        enemies = []; pickups = []; beams = []; projPool.releaseAll(); eProjPool.releaseAll(); Particles.clear(); DmgNumbers.clear();
         bossActive = null; player = null;
         hideAllScreens();
         ['hud', 'mpPanel', 'mpWait'].forEach(id => document.getElementById(id).classList.add('hidden'));
@@ -1433,7 +1479,7 @@ const Game = (() => {
     function mpRecordShot(proj) {
         if (!mp || mp.shotsOut.length >= 40) return;
         mp.shotsOut.push([Math.round(proj.x), Math.round(proj.y), Math.round(proj.vx), Math.round(proj.vy),
-            Math.round(proj.size * 10), Math.round(proj.damage), proj.crit ? 1 : (proj.isPhantom ? 2 : 0), Math.round(proj.life * 10)].join(','));
+            Math.round(proj.size * 10), Math.round(proj.damage), proj.crit ? 1 : (proj.isPhantom ? 2 : (proj.beam ? 3 : 0)), Math.round(proj.life * 10)].join(','));
     }
 
     function mpSpawnRemoteShots(owner, str) {
@@ -1442,7 +1488,7 @@ const Game = (() => {
             const f = part.split(',').map(Number);
             if (f.length < 8) continue;
             rprojs.push({ x: f[0], y: f[1], vx: f[2], vy: f[3], size: Math.max(2, f[4] / 10), dmg: f[5],
-                color: f[6] === 1 ? '#ffd700' : f[6] === 2 ? '#cc44ff' : (rm ? rm.color : '#ff3df2'), life: f[7] / 10, owner });
+                color: f[6] === 1 ? '#ffd700' : f[6] === 2 ? '#cc44ff' : (rm ? rm.color : '#ff3df2'), life: f[7] / 10, owner, beam: f[6] === 3 });
         }
         if (rprojs.length > 400) rprojs.splice(0, rprojs.length - 400);
     }
@@ -1450,14 +1496,15 @@ const Game = (() => {
     function mpUpdateRemoteProjectiles(dt) {
         for (let i = rprojs.length - 1; i >= 0; i--) {
             const q = rprojs[i];
+            const sx = q.x, sy = q.y;
             q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt;
             let remove = q.life <= 0 || q.x < -20 || q.x > GAME_W + 20 || q.y < -20 || q.y > GAME_H + 20;
-            if (!remove && mp.mode === 'pvp' && !mp.dead && player && dist(q.x, q.y, player.x, player.y) < q.size + player.size) {
+            if (!remove && mp.mode === 'pvp' && !mp.dead && player && segDist(player.x, player.y, sx, sy, q.x, q.y) < q.size + player.size) {
                 damagePlayer(q.dmg, q.owner);
                 Particles.emit(q.x, q.y, 5, q.color, { speed: 50, life: 0.2 });
                 remove = true;
             }
-            if (!remove && mp.mode === 'coop') {
+            if (!remove && mp.mode === 'coop' && !q.beam) { // чужой лазер, как и свой, пролетает врагов насквозь
                 for (const e of enemies) if (!e.dead && dist(q.x, q.y, e.x, e.y) < q.size + e.size) { remove = true; break; }
             }
             if (remove) rprojs.splice(i, 1);
@@ -1822,6 +1869,24 @@ const Game = (() => {
         document.getElementById('mpPanel').innerHTML = html;
     }
 
+    // лазерные выстрелы (свои и чужие): светящийся хвост вдоль направления полёта
+    function drawBeamShots() {
+        let any = false;
+        for (const p of projPool.active) if (p.beam) { any = true; break; }
+        if (!any && !rprojs.some(q => q.beam)) return;
+        ctx.lineCap = 'round';
+        const seg = (x, y, vx, vy, w, color) => {
+            const tx = x - vx * 0.045, ty = y - vy * 0.045;
+            ctx.strokeStyle = color; ctx.globalAlpha = 0.3; ctx.lineWidth = w * 3;
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+            ctx.globalAlpha = 1; ctx.lineWidth = w; ctx.strokeStyle = '#e8feff';
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+        };
+        for (const p of projPool.active) if (p.beam) seg(p.x, p.y, p.vx, p.vy, Math.max(2, p.size), p.color);
+        for (const q of rprojs) if (q.beam) seg(q.x, q.y, q.vx, q.vy, Math.max(2, q.size), q.color);
+        ctx.globalAlpha = 1;
+    }
+
     function drawRemotePlayers() {
         for (const uid in mp.remotes) {
             const rm = mp.remotes[uid];
@@ -1839,7 +1904,7 @@ const Game = (() => {
             ctx.globalAlpha = 1;
             ctx.restore();
         }
-        for (const q of rprojs) { ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill(); }
+        for (const q of rprojs) { if (q.beam) continue; ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill(); }
     }
 
     function drawDeadOverlay() {
@@ -1880,8 +1945,27 @@ const Game = (() => {
         }
         ctx.globalAlpha = 1;
         for (const e of enemies) { if (!e.dead) drawEnemy(e); }
+        // автонаводка на телефоне: пунктирное кольцо вокруг цели
+        const tgt = Touch.enabled && state === 'playing' ? Touch.target : null;
+        if (tgt) {
+            ctx.save(); ctx.strokeStyle = 'rgba(0,240,255,0.6)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]);
+            ctx.lineDashOffset = -(performance.now() / 40) % 10;
+            ctx.beginPath(); ctx.arc(tgt.x, tgt.y, (tgt.size || PLAYER_SIZE) + 9, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+        }
         for (const p of projPool.active) {
+            if (p.beam) continue;
             ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size, p.y - p.size, p.size * 2, p.size * 2);
+        }
+        drawBeamShots();
+        if (beams.length) {
+            ctx.lineCap = 'round';
+            for (const b of beams) {
+                if (b.type !== 'lightning') continue;
+                ctx.globalAlpha = clamp(b.life / 0.15, 0, 1); ctx.strokeStyle = b.color; ctx.lineWidth = 2;
+                const mx = (b.x + b.tx) / 2 + (b.ty - b.y) * 0.15, my = (b.y + b.ty) / 2 - (b.tx - b.x) * 0.15;
+                ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(mx, my); ctx.lineTo(b.tx, b.ty); ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
         }
         for (const p of eProjPool.active) {
             ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
@@ -2054,7 +2138,7 @@ const Game = (() => {
     }
 
     function startNewRun() {
-        hideAllScreens(); player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll();
+        hideAllScreens(); player = createPlayer(); enemies = []; beams = []; projPool.releaseAll(); eProjPool.releaseAll();
         pickups = []; acquiredUpgrades = []; evolutionPoints = 0; currentUpgradeOptions = [];
         round = 1; roundDuration = DEFAULT_ROUND_DURATION; roundTimer = roundDuration;
         kills = 0; runTime = 0; bossActive = null; upgradeSelectionPending = false; state = 'playing';
