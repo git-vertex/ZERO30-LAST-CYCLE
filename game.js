@@ -448,7 +448,8 @@ const Game = (() => {
         updateProjectiles(dt); updateEnemyProjectiles(dt);
         if (!mp || (mp.isHost && mp.mode === 'coop')) { EnemySpawner.update(dt, round, bossActive); updateEnemies(dt); }
         else if (mp.mode === 'coop') mpUpdateProxies(dt);
-        if (mp) mpUpdateRemoteProjectiles(dt); else updatePickups(dt);
+        if (mp) mpUpdateRemoteProjectiles(dt);
+        if (!mp || !mp.dead) updatePickups(dt);
         updateHazards(dt); updateBlackHoles(dt);
         if (!player || state !== 'playing') { if (player) updateHUD(); return; }
 
@@ -636,13 +637,13 @@ const Game = (() => {
         const byMe = !hitOwner;
         if (mp) {
             // В кооперативе опыт общий: хост копит его в world.xp, гости добавляют себе разницу
+            // Сферы опыта видит и собирает каждый игрок у себя (у каждого своя копия),
+            // гостям хост отправляет места смертей врагов вместе с общим счётчиком опыта
             if (byMe) mp.myKills++;
             mp.teamXp += e.xpValue || 3;
-            player.xp += (e.xpValue || 3) * player.xpMult;
-        } else {
-            pickups.push({ x: e.x, y: e.y, type: 'xp', value: (e.xpValue || 3) * player.xpMult, life: 15, size: 4, vy: 0 });
-            if (Math.random() < 0.08) pickups.push({ x: e.x, y: e.y, type: 'heal', value: 10 * player.healMult, life: 12, size: 5, vy: 0 });
+            if (mp.deathsOut.length < 80) mp.deathsOut.push(`${Math.round(e.x)},${Math.round(e.y)},${e.xpValue || 3}`);
         }
+        dropOrbs(e.x, e.y, e.xpValue || 3);
         if (player.killHeal > 0 && byMe && !(mp && mp.dead)) player.hp = Math.min(player.maxHp, player.hp + player.killHeal);
         if (e.isElite) { evolutionPoints += 1; if (mp) mp.teamEp += 1; DmgNumbers.spawn(e.x, e.y - 20, '+1 EP', false); }
         if (e.isBoss) { evolutionPoints += 3; if (mp) mp.teamEp += 3; DmgNumbers.spawn(e.x, e.y - 20, '+3 EP', false); }
@@ -751,6 +752,11 @@ const Game = (() => {
             document.getElementById('hudBoss').style.display = 'none';
             bossActive = null;
         }
+    }
+
+    function dropOrbs(x, y, xpValue) {
+        pickups.push({ x, y, type: 'xp', value: xpValue * player.xpMult, life: 15, size: 4, vy: 0 });
+        if (Math.random() < 0.08) pickups.push({ x, y, type: 'heal', value: 10 * player.healMult, life: 12, size: 5, vy: 0 });
     }
 
     function updatePickups(dt) {
@@ -866,7 +872,7 @@ const Game = (() => {
         screen.innerHTML = `
             <div class="evo-tree-container">
                 <div class="evo-top-bar">
-                    <div class="evo-points-display">▼ <span id="evoPoints">${evolutionPoints}</span> EP</div>
+                    <div class="evo-points-display"><span id="evoPoints">${evolutionPoints}</span> EP</div>
                     <p class="evo-tree-subtitle">Select ONE primary branch. Hover nodes for details.</p>
                 </div>
                 <div class="evo-map-wrapper">
@@ -892,12 +898,12 @@ const Game = (() => {
         linesContainer.innerHTML = ''; nodesContainer.innerHTML = '';
         const cx = 400, cy = 400, radiusSteps = [0, 110, 220, 330];
         const angles = [-Math.PI/2, -Math.PI/2 + (Math.PI*2/5), -Math.PI/2 + (Math.PI*4/5), -Math.PI/2 + (Math.PI*6/5), -Math.PI/2 + (Math.PI*8/5)];
-        const branchIcons = { assault: '⚔', bulwark: '⛨', phantom: '☄', swarm: '⎈', void: '✧' };
+        const branchLabels = { assault: 'A', bulwark: 'B', phantom: 'P', swarm: 'S', void: 'V' };
         
         let linesHTML = ''; const nodesData = [];
         const currentTier = player.evolutionForm === 'core' ? 0 : UpgradeSystem.evolutionBranches[player.evolutionBranch].forms.find(f => f.id === player.evolutionForm).tier;
 
-        nodesData.push({ x: cx, y: cy, tier: 0, form: { name: 'CORE', description: 'Base', cost: 0 }, branchColor: '#888', branchName: 'BASE', status: currentTier === 0 ? 'current' : 'unlocked', icon: '⌖' });
+        nodesData.push({ x: cx, y: cy, tier: 0, form: { name: 'CORE', description: 'Base', cost: 0 }, branchColor: '#888', branchName: 'BASE', status: currentTier === 0 ? 'current' : 'unlocked', icon: 'C' });
 
         Object.keys(UpgradeSystem.evolutionBranches).forEach((bId, idx) => {
             const branch = UpgradeSystem.evolutionBranches[bId];
@@ -909,7 +915,7 @@ const Game = (() => {
                 if (player.evolutionBranch === bId) {
                     if (currentTier === t) status = 'current'; else if (currentTier > t) status = 'unlocked'; else if (currentTier === t - 1 && evolutionPoints >= form.cost) status = 'available';
                 } else if (!player.evolutionBranch && t === 1 && evolutionPoints >= form.cost) status = 'available';
-                nodesData.push({ x: nx, y: ny, tier: t, form: form, branchId: bId, branchColor: branch.color, branchName: branch.name, status: status, icon: branchIcons[bId] });
+                nodesData.push({ x: nx, y: ny, tier: t, form: form, branchId: bId, branchColor: branch.color, branchName: branch.name, status: status, icon: branchLabels[bId] + t });
                 const prevR = radiusSteps[t - 1], prevVar = ((t - 1) % 2 === 0 ? 0.08 : -0.08);
                 const px = t === 1 ? cx : cx + Math.cos(angles[idx] + prevVar) * prevR, py = t === 1 ? cy : cy + Math.sin(angles[idx] + prevVar) * prevR;
                 linesHTML += `<line x1="${px}" y1="${py}" x2="${nx}" y2="${ny}" stroke="${status === 'locked' && player.evolutionBranch && player.evolutionBranch !== bId ? '#333' : branch.color}" stroke-width="3" opacity="${status === 'locked' ? 0.3 : 0.8}" />`;
@@ -922,7 +928,7 @@ const Game = (() => {
             el.style.left = nd.x + 'px'; el.style.top = nd.y + 'px';
             if (nd.status !== 'locked') { el.style.backgroundColor = nd.branchColor; el.style.color = '#fff'; }
             if (nd.status === 'current') el.style.color = nd.branchColor;
-            el.innerHTML = nd.status === 'locked' ? '?' : nd.icon;
+            el.textContent = nd.status === 'locked' ? '' : nd.icon;
             if (nd.status === 'available') el.addEventListener('click', () => {
                 if (!player.evolutionBranch && nd.tier === 1 && !confirm(`Commit to ${nd.branchName}? Other branches will lock.`)) return;
                 evolutionPoints -= nd.form.cost; UpgradeSystem.applyEvolutionForm(player, nd.branchId, nd.form.id);
@@ -969,7 +975,7 @@ const Game = (() => {
             players: opts.players || {}, remotes: {},
             sendTimer: 0, forceSend: true, shotsOut: [], epOut: [],
             hitTotals: new Map(), hitsDirty: false, hostApplied: {},
-            teamXp: 0, teamEp: 0, lastTeamXp: 0, lastTeamEp: 0, lastEps: 0,
+            teamXp: 0, teamEp: 0, lastTeamXp: 0, lastTeamEp: 0, lastEps: 0, deathsOut: [], lastDxs: 0,
             phase: 'start', readyRound: 0, upgradeWait: 0,
             dead: false, respawnTimer: 0, kb: {}, myKills: 0, pvpKillsSeen: 0,
             build: [], buildDirty: true, nextEnemyId: 1, proxies: new Map(),
@@ -1018,7 +1024,7 @@ const Game = (() => {
 
         round = w.r || 1; roundDuration = DEFAULT_ROUND_DURATION;
         roundTimer = typeof w.t === 'number' ? w.t : DEFAULT_ROUND_DURATION;
-        mp.teamXp = mp.lastTeamXp = w.xp || 0; mp.teamEp = mp.lastTeamEp = w.epb || 0; mp.lastEps = w.eps || 0;
+        mp.teamXp = mp.lastTeamXp = w.xp || 0; mp.teamEp = mp.lastTeamEp = w.epb || 0; mp.lastEps = w.eps || 0; mp.lastDxs = w.dxs || 0;
         kills = mp.mode === 'coop' ? (w.kills || 0) : 0;
         if (mp.isHost && mp.mode === 'coop') mpRestoreEnemies(w.en || '');
         mp.phase = w.ph === 'start' ? 'playing' : (w.ph || 'playing');
@@ -1249,6 +1255,14 @@ const Game = (() => {
                 if (s.sh) { rm.color = SLOT_COLORS[(info.slot !== undefined ? +info.slot : 0) % 4]; mpSpawnRemoteShots(uid, s.sh); }
             }
             rm.tx = s.x || 0; rm.ty = s.y || 0; rm.a = s.a || 0;
+            if (mp.mode === 'pvp') {
+                // PvP: за убийство на месте гибели соперника появляется сфера опыта (только у убийцы)
+                const byMe = (s.kb && s.kb[mp.uid]) || 0;
+                if (rm.killedByMe !== undefined && byMe > rm.killedByMe && player) {
+                    for (let i = rm.killedByMe; i < byMe; i++) dropOrbs(rm.tx + rng(-15, 15), rm.ty + rng(-15, 15), 25);
+                }
+                rm.killedByMe = byMe;
+            }
             rm.hp = s.hp || 0; rm.mhp = s.mhp || 100; rm.lv = s.lv || 1; rm.alive = s.al !== false; rm.rd = s.rd || 0;
             rm.size = s.sz || PLAYER_SIZE; rm.formColor = s.c || ''; rm.k = s.k || 0; rm.kb = s.kb || {};
             rm.name = info.name || s.n || '???';
@@ -1272,7 +1286,6 @@ const Game = (() => {
         if (mp.pvpKillsSeen === null) mp.pvpKillsSeen = mine;
         else if (mine > mp.pvpKillsSeen && player) {
             const d = mine - mp.pvpKillsSeen; mp.pvpKillsSeen = mine;
-            player.xp += 25 * d * player.xpMult;
             player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.2 * d);
             DmgNumbers.spawn(player.x, player.y - 30, '+KILL', true); Audio.play('kill');
         }
@@ -1282,7 +1295,21 @@ const Game = (() => {
     // ---------- МИР (хост → гости) ----------
     function netWorld(w) {
         if (!mp || !w || w.mid !== mp.matchId || mp.isHost || !player) return;
-        if ((w.xp || 0) > mp.lastTeamXp) { player.xp += (w.xp - mp.lastTeamXp) * player.xpMult; mp.lastTeamXp = w.xp; }
+        let orbXp = 0;
+        if (w.dxs && w.dxs !== mp.lastDxs) {
+            mp.lastDxs = w.dxs;
+            for (const part of String(w.dx || '').split(';')) {
+                const f = part.split(',');
+                if (f.length < 3) continue;
+                dropOrbs(+f[0], +f[1], +f[2]); orbXp += +f[2];
+            }
+        }
+        if ((w.xp || 0) > mp.lastTeamXp) {
+            // если какая-то пачка смертей потерялась в сети, недостающий опыт начисляем напрямую
+            const rest = (w.xp - mp.lastTeamXp) - orbXp;
+            if (rest > 0) player.xp += rest * player.xpMult;
+            mp.lastTeamXp = w.xp;
+        }
         if ((w.epb || 0) > mp.lastTeamEp) { evolutionPoints += w.epb - mp.lastTeamEp; mp.lastTeamEp = w.epb; }
         if (mp.mode === 'coop') kills = w.kills || 0;
         if (w.eps && w.eps !== mp.lastEps) { if (w.ep) mpSpawnEnemyShots(w.ep); mp.lastEps = w.eps; }
@@ -1377,7 +1404,7 @@ const Game = (() => {
         let html = `<div class="stat-label">${pvp ? 'Раундов сыграно' : 'Раунд'}</div><div class="stat-value">${w.r || round}</div>`;
         if (!pvp) html += `<div class="stat-label">Убийств командой</div><div class="stat-value">${w.kills || kills}</div>`;
         rows.forEach((r, i) => {
-            html += `<div class="stat-label"><span class="mp-dot" style="background:${r.color}"></span>${pvp ? (i + 1) + '. ' : ''}${escHtml(r.name)}${r.me ? ' (вы)' : ''}</div><div class="stat-value">${r.kills} ${pvp ? 'убийств' : 'уб.'} · LV ${r.lv}</div>`;
+            html += `<div class="stat-label" style="color:${r.color}">${pvp ? (i + 1) + '. ' : ''}${escHtml(r.name)}${r.me ? ' (вы)' : ''}</div><div class="stat-value">${r.kills} ${pvp ? 'убийств' : 'уб.'}, LV ${r.lv}</div>`;
         });
         document.getElementById('goStats').innerHTML = html;
         document.getElementById('goBuild').innerHTML = acquiredUpgrades.map(u => `<span class="build-tag">${escHtml(u.name || u.id)}</span>`).join('');
@@ -1460,6 +1487,7 @@ const Game = (() => {
                 boss: bossActive && !bossActive.dead ? `${bossActive.name}|${Math.max(0, Math.ceil(bossActive.hp))}|${Math.ceil(bossActive.maxHp)}` : '' };
             if (mp.mode === 'coop') w.en = mpEncodeEnemies();
             if (mp.epOut.length) { w.ep = mp.epOut.join(';'); w.eps = netSeq(); mp.epOut = []; }
+            if (mp.deathsOut.length) { w.dx = mp.deathsOut.join(';'); w.dxs = netSeq(); mp.deathsOut = []; }
             if (mp.phase === 'over') w.res = mp.finalRes;
             mp.net.sendWorld(w);
         } else if (mp.mode === 'coop' && mp.hitsDirty) {
@@ -1509,10 +1537,10 @@ const Game = (() => {
             const rm = mp.remotes[uid];
             rows.push({ name: rm.name, color: rm.color, hp: rm.hp, mhp: rm.mhp, alive: rm.alive, lv: rm.lv, kills: pvp ? mpPvpKillsOf(uid) : rm.k, me: false, online: rm.online });
         }
-        let html = `<div class="mp-panel-title">${pvp ? `PVP · РАУНД ${round}/${PVP_ROUNDS}` : 'КООПЕРАТИВ'}</div>`;
+        let html = `<div class="mp-panel-title">${pvp ? `PVP, РАУНД ${round}/${PVP_ROUNDS}` : 'КООПЕРАТИВ'}</div>`;
         for (const r of rows) {
             const pct = clamp(r.hp / (r.mhp || 1) * 100, 0, 100);
-            html += `<div class="mp-row${r.alive ? '' : ' dead'}${r.online ? '' : ' offline'}"><span class="mp-dot" style="background:${r.color}"></span><span class="mp-name">${escHtml(r.name)}${r.me ? ' (вы)' : ''}</span><span class="mp-lv">LV${r.lv}</span><span class="mp-kills">${r.kills}☠</span>` +
+            html += `<div class="mp-row${r.alive ? '' : ' dead'}${r.online ? '' : ' offline'}"><span class="mp-name" style="color:${r.color}">${escHtml(r.name)}${r.me ? ' (вы)' : ''}</span><span class="mp-lv">LV ${r.lv}</span><span class="mp-kills">${r.kills} уб.</span>` +
                 `<div class="mp-hp"><div style="width:${r.alive ? pct : 0}%;background:${r.color}"></div></div>${r.online ? '' : '<span class="mp-off">нет связи</span>'}</div>`;
         }
         document.getElementById('mpPanel').innerHTML = html;
@@ -1523,17 +1551,16 @@ const Game = (() => {
             const rm = mp.remotes[uid];
             ctx.save(); ctx.translate(rm.x, rm.y);
             ctx.globalAlpha = rm.alive ? (rm.online ? 1 : 0.4) : 0.25;
-            ctx.strokeStyle = rm.color; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.arc(0, 0, rm.size + 6, 0, Math.PI * 2); ctx.stroke();
             ctx.save(); ctx.rotate(rm.a);
             ctx.fillStyle = rm.formColor || rm.color;
             ctx.beginPath(); ctx.moveTo(rm.size, 0); ctx.lineTo(-rm.size * 0.6, -rm.size * 0.7); ctx.lineTo(-rm.size * 0.6, rm.size * 0.7); ctx.fill();
             ctx.restore();
-            ctx.globalAlpha = 1;
+            ctx.globalAlpha = rm.alive ? 1 : 0.4;
             ctx.fillStyle = rm.color; ctx.font = "bold 12px 'Share Tech Mono', monospace"; ctx.textAlign = 'center';
-            ctx.fillText((rm.alive ? '' : '☠ ') + rm.name, 0, -rm.size - 16);
+            ctx.fillText(rm.name, 0, -rm.size - 16);
             ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-18, -rm.size - 12, 36, 4);
             ctx.fillStyle = rm.color; ctx.fillRect(-18, -rm.size - 12, 36 * clamp(rm.hp / (rm.mhp || 1), 0, 1), 4);
+            ctx.globalAlpha = 1;
             ctx.restore();
         }
         for (const q of rprojs) { ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill(); }
@@ -1581,7 +1608,6 @@ const Game = (() => {
 
         if (player && state !== 'gameover' && !(mp && mp.dead)) {
             ctx.save(); ctx.translate(player.x, player.y);
-            if (mp) { ctx.strokeStyle = SLOT_COLORS[mp.slot % 4]; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, player.size + 6, 0, Math.PI * 2); ctx.stroke(); }
             ctx.strokeStyle = 'rgba(168,85,247,0.06)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, player.pickupRadius, 0, Math.PI * 2); ctx.stroke();
             if (player.pickupRadius > PICKUP_RADIUS_BASE + 10) { ctx.strokeStyle = 'rgba(168,85,247,0.12)'; ctx.stroke(); }
 
