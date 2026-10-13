@@ -333,11 +333,7 @@ const Game = (() => {
     function initInput() {
         window.addEventListener('keydown', (e) => {
             keys[e.code] = true;
-            if (e.code === 'Escape') {
-                if (settingsReturnTo) closeSettings();
-                else if (mp) { if (state !== 'gameover') mpToggleMenu(); }
-                else if (state === 'playing') pauseGame(); else if (state === 'paused') resumeGame(); else if (state === 'evolutionTree') closeEvolutionTree();
-            }
+            if (e.code === 'Escape') menuKey();
             if (e.code === 'KeyT' && state === 'playing' && !mp) openEvolutionTree();
             if (state === 'upgrading' && !upgradeSelectionPending) {
                 const num = parseInt(e.key);
@@ -346,11 +342,141 @@ const Game = (() => {
         });
         window.addEventListener('keyup', (e) => { keys[e.code] = false; });
         canvas.addEventListener('mousemove', (e) => {
+            // настоящая мышь выключает сенсорный режим (синтетические события после касания игнорируем)
+            if (performance.now() - Touch.lastTouchAt > 1000) Touch.setMode(false);
             mouseX = e.clientX; mouseY = e.clientY;
             const gp = screenToGame(mouseX, mouseY);
             mouseGameX = gp.x; mouseGameY = gp.y;
         });
+        Touch.init();
     }
+
+    function menuKey() {
+        if (settingsReturnTo) closeSettings();
+        else if (mp) { if (state !== 'gameover') mpToggleMenu(); }
+        else if (state === 'playing') pauseGame(); else if (state === 'paused') resumeGame(); else if (state === 'evolutionTree') closeEvolutionTree();
+    }
+
+    // ============================================================
+    // СЕНСОРНОЕ УПРАВЛЕНИЕ: два джойстика
+    // левая половина экрана — движение, правая — направление стрельбы
+    // ============================================================
+    const Touch = (() => {
+        const RADIUS = 55;       // ход ручки в CSS-пикселях
+        const DEAD = 0.12;       // мёртвая зона
+        const AIM_MIN = 0.25;    // с какого отклонения правый джойстик меняет направление
+        let layer = null, enabled = false, shown = false;
+        let aimDir = { x: 1, y: 0 };
+        const sticks = {
+            move: { id: null, ox: 0, oy: 0, vx: 0, vy: 0, mag: 0, el: null, knob: null },
+            aim:  { id: null, ox: 0, oy: 0, vx: 0, vy: 0, mag: 0, el: null, knob: null }
+        };
+        const api = { lastTouchAt: -1e9, init, setMode, sync, move: sticks.move, aim: sticks.aim, applyAim, get enabled() { return enabled; } };
+
+        function init() {
+            layer = document.getElementById('touchLayer');
+            if (!layer) return;
+            sticks.move.el = document.getElementById('joyMove'); sticks.move.knob = sticks.move.el.querySelector('.joy-knob');
+            sticks.aim.el = document.getElementById('joyAim'); sticks.aim.knob = sticks.aim.el.querySelector('.joy-knob');
+            window.addEventListener('touchstart', () => { api.lastTouchAt = performance.now(); setMode(true); }, { capture: true, passive: true });
+            layer.addEventListener('touchstart', onStart, { passive: false });
+            layer.addEventListener('touchmove', onMove, { passive: false });
+            layer.addEventListener('touchend', onEnd, { passive: false });
+            layer.addEventListener('touchcancel', onEnd, { passive: false });
+            document.getElementById('btnTouchPause').addEventListener('click', (e) => { e.stopPropagation(); menuKey(); });
+            // телефон или планшет: основной указатель — палец
+            let coarse = false;
+            try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (e) {}
+            setMode(coarse);
+        }
+
+        function setMode(on) {
+            if (enabled === on) return;
+            enabled = on;
+            document.body.classList.toggle('touch-mode', on);
+            if (!on) { releaseAll(); if (layer) layer.classList.add('hidden'); shown = false; }
+        }
+
+        // показываем джойстики только в бою, чтобы они не перекрывали меню
+        function sync() {
+            if (!layer) return;
+            const hudOn = !document.getElementById('hud').classList.contains('hidden');
+            const want = enabled && hudOn && (state === 'playing' || state === 'roundStart');
+            if (want !== shown) {
+                shown = want;
+                layer.classList.toggle('hidden', !want);
+                if (!want) releaseAll();
+            }
+            const pauseBtn = document.getElementById('btnTouchPause');
+            const label = mp ? 'MENU' : 'PAUSE';
+            if (pauseBtn.textContent !== label) pauseBtn.textContent = label;
+        }
+
+        function stickFor(id) { return sticks.move.id === id ? sticks.move : (sticks.aim.id === id ? sticks.aim : null); }
+
+        function onStart(e) {
+            if (e.target.closest && e.target.closest('button')) return; // кнопка паузы
+            e.preventDefault();
+            for (const t of e.changedTouches) {
+                const st = t.clientX < window.innerWidth / 2 ? sticks.move : sticks.aim;
+                if (st.id !== null) continue;
+                st.id = t.identifier;
+                // джойстик появляется под пальцем, но целиком в пределах экрана
+                const m = RADIUS + 10;
+                st.ox = clamp(t.clientX, m, window.innerWidth - m);
+                st.oy = clamp(t.clientY, m, window.innerHeight - m);
+                st.el.classList.add('active');
+                st.el.style.left = st.ox + 'px'; st.el.style.top = st.oy + 'px';
+                st.el.style.right = 'auto'; st.el.style.bottom = 'auto';
+                update(st, t.clientX, t.clientY);
+            }
+        }
+
+        function onMove(e) {
+            e.preventDefault();
+            for (const t of e.changedTouches) { const st = stickFor(t.identifier); if (st) update(st, t.clientX, t.clientY); }
+        }
+
+        function onEnd(e) {
+            e.preventDefault();
+            for (const t of e.changedTouches) { const st = stickFor(t.identifier); if (st) release(st); }
+        }
+
+        function update(st, x, y) {
+            let dx = x - st.ox, dy = y - st.oy;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > RADIUS) { dx = dx / d * RADIUS; dy = dy / d * RADIUS; }
+            st.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+            let mag = Math.min(1, d / RADIUS);
+            if (mag < DEAD) { st.vx = 0; st.vy = 0; st.mag = 0; return; }
+            st.mag = (mag - DEAD) / (1 - DEAD);
+            st.vx = dx / (Math.sqrt(dx * dx + dy * dy) || 1) * st.mag;
+            st.vy = dy / (Math.sqrt(dx * dx + dy * dy) || 1) * st.mag;
+            if (st === sticks.aim && mag >= AIM_MIN) { const l = Math.sqrt(dx * dx + dy * dy) || 1; aimDir = { x: dx / l, y: dy / l }; }
+        }
+
+        function release(st) {
+            st.id = null; st.vx = 0; st.vy = 0; st.mag = 0;
+            if (!st.el) return;
+            st.el.classList.remove('active');
+            st.el.style.left = st.el.style.top = st.el.style.right = st.el.style.bottom = '';
+            st.knob.style.transform = '';
+        }
+        function releaseAll() { release(sticks.move); release(sticks.aim); }
+
+        // Куда стрелять: пока правый джойстик зажат — по нему.
+        // Отпустили — автонаведение на ближайшего врага, а если рядом никого — в последнем направлении.
+        function applyAim(p) {
+            if (!enabled || !p) return;
+            if (sticks.aim.id === null) {
+                for (const e of enemies) {
+                    if (!e.dead && dist(p.x, p.y, e.x, e.y) < 300) { mouseGameX = p.x; mouseGameY = p.y; return; }
+                }
+            }
+            mouseGameX = p.x + aimDir.x * 150; mouseGameY = p.y + aimDir.y * 150;
+        }
+        return api;
+    })();
 
     function loop(time) {
         const dt = Math.min(Math.max((time - lastTime) / 1000, 0), 0.05);
@@ -368,6 +494,7 @@ const Game = (() => {
             }
         }
         if (mp) mpFrame(dt);
+        Touch.sync();
         render();
         requestAnimationFrame(loop);
     }
@@ -389,6 +516,8 @@ const Game = (() => {
             if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
             if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
             if (mx !== 0 || my !== 0) { const len = Math.sqrt(mx * mx + my * my); mx /= len; my /= len; }
+            else if (Touch.move.mag > 0) { mx = Touch.move.vx; my = Touch.move.vy; } // левый джойстик (аналоговый)
+            Touch.applyAim(p);
             const accel = 1200, friction = 8;
             p.vx += mx * accel * dt; p.vy += my * accel * dt;
             p.vx *= Math.max(0, 1 - friction * dt); p.vy *= Math.max(0, 1 - friction * dt);
@@ -1088,7 +1217,7 @@ const Game = (() => {
 
     function mpActiveRemotes() { return Object.values(mp.remotes).filter(rm => rm.online); }
 
-    // ---------- ВРАГИ: кодирование снимка (хост → все) ----------
+    // ---------- ВРАГИ: кодирование снимка (хост рассылает всем) ----------
     function mpEncodeEnemies() {
         const out = [];
         for (const e of enemies) {
@@ -1212,7 +1341,7 @@ const Game = (() => {
         }
     }
 
-    // ---------- СНАРЯДЫ ВРАГОВ (хост → все, у каждого симулируются локально) ----------
+    // ---------- СНАРЯДЫ ВРАГОВ (хост рассылает всем, у каждого симулируются локально) ----------
     function mpRecordEnemyShot(x, y, vx, vy, damage, color, life) {
         if (!mp || !mp.isHost || mp.epOut.length >= 60) return;
         mp.epOut.push([Math.round(x), Math.round(y), Math.round(vx), Math.round(vy), Math.round(damage || 0), hexOf(color), Math.round((life || 3) * 10)].join(','));
@@ -1292,7 +1421,7 @@ const Game = (() => {
         kills = mine;
     }
 
-    // ---------- МИР (хост → гости) ----------
+    // ---------- МИР (хост рассылает гостям) ----------
     function netWorld(w) {
         if (!mp || !w || w.mid !== mp.matchId || mp.isHost || !player) return;
         let orbXp = 0;
@@ -1645,7 +1774,7 @@ const Game = (() => {
         document.getElementById('hudKills').textContent = kills;
         document.getElementById('hudHealthFill').style.width = clamp(player.hp / player.maxHp * 100, 0, 100) + '%';
         document.getElementById('hudHealthText').textContent = `${Math.ceil(player.hp)}/${player.maxHp}`;
-        document.getElementById('hudEP').textContent = `EP: ${evolutionPoints}  [T] TREE`;
+        document.getElementById('hudEP').textContent = Touch.enabled ? `EP: ${evolutionPoints}` : `EP: ${evolutionPoints}  [T] TREE`;
         document.getElementById('hudXpFill').style.width = clamp(player.xp / player.xpToNext * 100, 0, 100) + '%';
         document.getElementById('hudXpText').textContent = `LV ${player.level}  ${Math.floor(player.xp)}/${player.xpToNext} XP`;
         const shieldBar = document.getElementById('hudShieldBar');
