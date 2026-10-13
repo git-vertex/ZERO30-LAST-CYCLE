@@ -1015,3 +1015,350 @@ canvas {
 .tt-branch { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 0.6rem; }
 .tt-desc { font-size: 0.75rem; color: #b8b8cf; line-height: 1.3; margin-bottom: 0.6rem; }
 .tt-cost { font-size: 0.75rem; font-weight: bold; color: var(--gold); border-top: 1px solid #333; padding-top: 0.5rem; }
+/* ============================================================
+   ONLINE / MULTIPLAYER
+   ============================================================ */
+.hidden { display: none !important; }
+
+.menu-btn.online-btn { border-color: var(--green); color: var(--green); }
+.menu-btn.online-btn:hover { background: rgba(0,255,136,0.12); box-shadow: 0 0 20px rgba(0,255,136,0.3); }
+
+.online-card {
+    width: min(460px, 94vw);
+    max-height: 94vh;
+    overflow-y: auto;
+    background: rgba(10, 10, 15, 0.85);
+    border: 1px solid var(--border);
+    padding: 1.6rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    text-align: center;
+    user-select: text;
+}
+.online-card h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.5rem;
+    color: var(--cyan);
+    letter-spacing: 0.15em;
+    text-shadow: 0 0 10px rgba(0,240,255,0.3);
+}
+.online-form { display: flex; flex-direction: column; gap: 0.7rem; }
+.online-sub { color: var(--text-dim); font-size: 0.85rem; line-height: 1.4; }
+.online-label { color: var(--text-dim); font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; margin-top: 0.4rem; text-align: left; }
+.online-input {
+    width: 100%;
+    min-height: 52px;
+    padding: 0.8rem 1rem;
+    background: var(--card-bg);
+    border: 1px solid #2a2a44;
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.1rem;
+    outline: none;
+    user-select: text;
+}
+.online-input:focus { border-color: var(--cyan); box-shadow: 0 0 10px rgba(0,240,255,0.25); }
+.online-input.code { text-transform: uppercase; letter-spacing: 0.4em; text-align: center; font-family: 'Orbitron', sans-serif; }
+.online-row { display: flex; gap: 0.5rem; align-items: stretch; }
+.online-row .online-input { flex: 1; min-width: 0; }
+.online-error { color: var(--crimson); min-height: 1.1em; font-size: 0.9rem; }
+.online-user { font-size: 1rem; }
+.online-user b { color: var(--cyan); }
+.online-stats { color: var(--text-dim); font-size: 0.85rem; line-height: 1.5; }
+.online-stats b { color: var(--text); }
+
+.menu-btn.big { width: 100%; min-height: 54px; font-size: 0.95rem; padding: 0.9rem 1rem; }
+.menu-btn.small { min-height: 52px; padding: 0.6rem 1.1rem; }
+.menu-btn.alt { border-color: var(--violet); color: var(--violet); }
+.menu-btn.ghost { border-color: #33334d; color: var(--text-dim); }
+.menu-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.mode-btn {
+    min-height: 52px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.8rem;
+    background: transparent;
+    border: 1px solid #33334d;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+.mode-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(0,240,255,0.1); box-shadow: 0 0 12px rgba(0,240,255,0.2); }
+.mode-btn:disabled { cursor: default; }
+.mode-btn:disabled:not(.active) { opacity: 0.35; }
+
+.lobby-code {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(2rem, 9vw, 2.8rem);
+    font-weight: 900;
+    letter-spacing: 0.3em;
+    color: var(--gold);
+    background: rgba(255,215,0,0.06);
+    border: 1px dashed var(--gold);
+    padding: 0.6rem 0.4rem 0.6rem 0.7rem;
+    cursor: pointer;
+}
+.lobby-players { display: flex; flex-direction: column; gap: 0.4rem; }
+/* колонки внутри онлайн-карточек: обычно друг под другом, на горизонтальном телефоне рядом */
+.card-cols { display: flex; flex-direction: column; gap: 0.7rem; }
+.card-col { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; }
+.lobby-player {
+    display: flex; align-items: center; gap: 0.5rem;
+    min-height: 48px; padding: 0.5rem 0.8rem;
+    background: var(--card-bg); border: 1px solid var(--border);
+    text-align: left; font-size: 1rem;
+}
+.lobby-player.offline { opacity: 0.5; }
+.lobby-player.empty { color: var(--text-dim); justify-content: center; border-style: dashed; font-size: 0.85rem; }
+.lp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
+.badge { font-size: 0.65rem; padding: 0.15rem 0.45rem; border: 1px solid #44445e; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.badge.host { border-color: var(--gold); color: var(--gold); }
+.badge.me { border-color: var(--cyan); color: var(--cyan); }
+.badge.off { border-color: var(--crimson); color: var(--crimson); }
+
+/* HUD: список игроков */
+.mp-panel {
+    position: absolute;
+    top: 4.2rem; right: 1rem;
+    width: 230px;
+    background: rgba(5,5,10,0.65);
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.6rem;
+    font-size: 0.78rem;
+}
+.mp-panel-title { font-family: 'Orbitron', sans-serif; font-size: 0.65rem; color: var(--text-dim); letter-spacing: 0.15em; margin-bottom: 0.35rem; }
+.mp-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; column-gap: 0.4rem; margin-bottom: 0.35rem; }
+.mp-row.dead { opacity: 0.45; }
+.mp-row.offline { opacity: 0.35; }
+.mp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
+.mp-lv { color: var(--violet); }
+.mp-kills { color: var(--text-dim); }
+.mp-hp { grid-column: 1 / -1; height: 4px; background: rgba(255,255,255,0.08); margin-top: 2px; }
+.mp-hp div { height: 100%; transition: width 0.2s; }
+.mp-off { grid-column: 1 / -1; color: var(--crimson); font-size: 0.65rem; }
+
+.mp-wait {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 0.8rem;
+    background: rgba(5,5,10,0.8);
+    z-index: 9;
+}
+.mp-wait-title { font-family: 'Orbitron', sans-serif; font-size: clamp(1rem, 3vw, 1.6rem); color: var(--cyan); letter-spacing: 0.15em; text-align: center; animation: titlePulse 2s ease-in-out infinite; }
+.mp-wait-count { color: var(--text-dim); font-size: 1rem; }
+
+.mp-toast {
+    position: fixed; left: 50%; bottom: 1.5rem; transform: translate(-50%, 150%);
+    max-width: 92vw;
+    background: rgba(18,18,26,0.96); border: 1px solid var(--cyan); color: var(--text);
+    padding: 0.8rem 1.2rem; font-size: 0.95rem; text-align: center;
+    z-index: 50; opacity: 0; transition: all 0.25s ease; pointer-events: none;
+}
+.mp-toast.visible { transform: translate(-50%, 0); opacity: 1; }
+
+.mp-over-buttons { display: flex; flex-direction: column; gap: 0.6rem; align-items: center; width: min(420px, 100%); margin: 0 auto; }
+
+.setting-value { color: var(--text); font-size: 0.85rem; text-align: right; overflow-wrap: anywhere; user-select: text; }
+.setting-value.uid { font-size: 0.7rem; color: var(--text-dim); }
+
+@media (max-width: 600px) {
+    .mp-panel { top: auto; bottom: 7.5rem; right: 0.5rem; width: 180px; font-size: 0.7rem; }
+    .online-card { padding: 1.2rem 1rem; }
+}
+
+/* ============================================================
+   СЕНСОРНОЕ УПРАВЛЕНИЕ: два джойстика
+   ============================================================ */
+.touch-layer {
+    position: fixed; inset: 0;
+    z-index: 6;               /* выше HUD, ниже экранов меню и ожидания */
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.touch-layer.hidden { display: none; }
+.joy {
+    --joy-size: 120px;
+    position: fixed;
+    width: var(--joy-size); height: var(--joy-size);
+    margin: calc(var(--joy-size) / -2) 0 0 calc(var(--joy-size) / -2);
+    border-radius: 50%;
+    border: 2px solid rgba(0, 240, 255, 0.35);
+    background: rgba(0, 240, 255, 0.06);
+    opacity: 0.45;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+/* место в покое: внизу слева и внизу справа */
+.joy-move { left: calc(90px + env(safe-area-inset-left, 0px)); top: calc(100% - 90px - env(safe-area-inset-bottom, 0px)); }
+.joy-aim  { left: calc(100% - 90px - env(safe-area-inset-right, 0px)); top: calc(100% - 90px - env(safe-area-inset-bottom, 0px)); border-color: rgba(255, 61, 242, 0.4); background: rgba(255, 61, 242, 0.06); }
+.joy.active { opacity: 0.9; transition: none; }
+.joy-knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 54px; height: 54px; margin: -27px 0 0 -27px;
+    border-radius: 50%;
+    background: rgba(0, 240, 255, 0.45);
+    box-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
+}
+.joy-aim .joy-knob { background: rgba(255, 61, 242, 0.45); box-shadow: 0 0 12px rgba(255, 61, 242, 0.5); }
+.touch-pause {
+    position: fixed; left: 50%; bottom: calc(0.7rem + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+    font-family: 'Orbitron', sans-serif; font-size: 0.75rem; letter-spacing: 0.15em;
+    color: var(--text-dim); background: rgba(10, 10, 15, 0.7);
+    border: 1px solid var(--border); padding: 0.6rem 1rem; min-width: 88px;
+    touch-action: manipulation;
+}
+/* на телефоне HUD уходит наверх, чтобы не лежать под джойстиками */
+body.touch-mode .hud-bottom-left { bottom: auto; top: calc(3.4rem + env(safe-area-inset-top, 0px)); left: calc(0.6rem + env(safe-area-inset-left, 0px)); gap: 0.25rem; }
+body.touch-mode .hud-health-bar, body.touch-mode .hud-shield-bar, body.touch-mode .hud-xp-bar { width: 160px; }
+body.touch-mode .hud-health-bar { height: 14px; }
+body.touch-mode .hud-dash { display: none; }
+body.touch-mode .hud-bottom-right { bottom: auto; top: calc(7rem + env(safe-area-inset-top, 0px)); left: calc(0.6rem + env(safe-area-inset-left, 0px)); right: auto; }
+body.touch-mode .mp-panel { top: calc(3.4rem + env(safe-area-inset-top, 0px)); bottom: auto; right: 0.5rem; width: 160px; font-size: 0.7rem; }
+body.touch-mode .upgrade-hint { display: none; }
+body.touch-mode .hud { padding: 0.5rem 0.8rem; }
+body.touch-mode .hud-timer { font-size: 1.6rem; }
+body.touch-mode .hud-round, body.touch-mode .hud-kills { font-size: 0.8rem; }
+
+/* кнопка рывка на телефоне: слева от правого джойстика */
+.touch-dash {
+    position: fixed;
+    right: calc(172px + env(safe-area-inset-right, 0px)); bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+    width: 72px; height: 72px; border-radius: 50%;
+    font-family: 'Orbitron', sans-serif; font-size: 0.75rem; font-weight: bold; letter-spacing: 0.1em;
+    color: var(--cyan); background: rgba(0, 240, 255, 0.12);
+    border: 2px solid rgba(0, 240, 255, 0.6);
+    touch-action: none;
+}
+.touch-dash.pressed { background: rgba(0, 240, 255, 0.35); }
+.touch-dash.cooldown { color: var(--text-dim); border-color: rgba(120, 120, 150, 0.4); background: rgba(10, 10, 15, 0.5); }
+
+/* ============================================================
+   ТЕЛЕФОН: производительность
+   ============================================================ */
+body.touch-mode { cursor: default; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* размытие фона под меню и постоянные анимации сильно грузят мобильный GPU */
+body.touch-mode .screen { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(5, 5, 10, 0.97); transition: none; }
+body.touch-mode .menu-bg-grid,
+body.touch-mode .game-title,
+body.touch-mode .mp-wait-title,
+body.touch-mode .hud-timer.critical { animation: none; }
+body.touch-mode .menu-btn::before { display: none; }
+body.touch-mode .menu-btn:hover, body.touch-mode .upgrade-card:hover { transform: none; }
+body.touch-mode .hud { padding-left: max(0.8rem, env(safe-area-inset-left, 0px)); padding-right: max(0.8rem, env(safe-area-inset-right, 0px)); }
+@media (prefers-reduced-motion: reduce) {
+    .menu-bg-grid, .game-title, .mp-wait-title { animation: none; }
+}
+
+/* подсказка повернуть телефон */
+.rotate-hint {
+    display: none;
+    position: fixed; left: 50%; top: calc(6.5rem + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+    z-index: 60; max-width: 90vw;
+    padding: 0.6rem 1rem; text-align: center; font-size: 0.85rem;
+    color: var(--gold); background: rgba(18, 18, 26, 0.92); border: 1px solid var(--gold);
+    pointer-events: none;
+}
+@media (orientation: portrait) { body.touch-mode .rotate-hint { display: block; } }
+
+/* ============================================================
+   ТЕЛЕФОН ГОРИЗОНТАЛЬНО (низкий экран)
+   ============================================================ */
+@media (max-height: 520px) and (orientation: landscape) {
+    /* экраны прокручиваются, если не помещаются; если помещаются — по центру */
+    .screen { overflow-y: auto; -webkit-overflow-scrolling: touch; justify-content: flex-start; padding: 0.6rem max(1rem, env(safe-area-inset-right, 0px)) 0.6rem max(1rem, env(safe-area-inset-left, 0px)); }
+    .screen > * { flex-shrink: 0; }
+    .screen > :first-child { margin-top: auto; }
+    .screen > :last-child { margin-bottom: auto; }
+    #mainMenu > .menu-content { margin-top: auto; margin-bottom: auto; }
+
+    /* главное меню: кнопки сеткой 2 на 2 */
+    .game-title { font-size: 2.6rem; }
+    .subtitle { font-size: 0.75rem; margin-bottom: 1rem; letter-spacing: 0.4em; }
+    .menu-buttons { display: grid; grid-template-columns: repeat(2, minmax(200px, 1fr)); gap: 0.6rem; }
+    .menu-btn { min-width: 0; padding: 0.75rem 1.2rem; font-size: 0.8rem; }
+    .version { display: none; }
+
+    /* пауза: кнопки в ряд */
+    .pause-content { max-width: 680px; padding: 1rem 1.2rem; display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; }
+    .pause-content h2 { width: 100%; margin-bottom: 0.4rem; font-size: 1.1rem; }
+
+    /* настройки: в две колонки */
+    .settings-content { max-width: 780px; padding: 0.8rem 1.2rem; display: grid; grid-template-columns: 1fr 1fr; column-gap: 1.6rem; }
+    .settings-content h2 { grid-column: 1 / -1; margin-bottom: 0.3rem; font-size: 1.1rem; }
+    .settings-content .menu-btn { grid-column: 1 / -1; justify-self: center; margin-top: 0.6rem; min-width: 200px; }
+    .setting-row { padding: 0.45rem 0; font-size: 0.8rem; gap: 0.6rem; }
+
+    /* улучшения: 3 карточки в ряд, компактно */
+    #upgradeScreen { padding: 0.5rem max(0.8rem, env(safe-area-inset-right, 0px)) 0.5rem max(0.8rem, env(safe-area-inset-left, 0px)); }
+    .upgrade-header { margin-bottom: 0.5rem; }
+    .upgrade-header h2 { font-size: 1rem; }
+    #upgradeRoundInfo { font-size: 0.75rem; margin-top: 0.2rem; }
+    .menu-btn.evo-btn { min-width: 0; padding: 0.4rem 1rem; font-size: 0.7rem; }
+    .upgrade-cards { grid-template-columns: repeat(3, 1fr); gap: 0.5rem; max-height: none; overflow: visible; }
+    .upgrade-card { min-height: 0; padding: 0.55rem 0.7rem; gap: 0.25rem; }
+    .upgrade-card .card-key { display: none; }
+    .upgrade-card .card-name { font-size: 0.82rem; }
+    .upgrade-card .card-desc { font-size: 0.72rem; line-height: 1.3; }
+    .upgrade-hint { margin-top: 0.4rem; font-size: 0.7rem; }
+
+    /* итоги */
+    .gameover-content { max-width: 760px; width: 96%; }
+    .gameover-title { font-size: 1.6rem; margin-bottom: 0.5rem; }
+    .go-stats { grid-template-columns: repeat(4, auto); padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; font-size: 0.8rem; gap: 0.3rem 0.8rem; }
+    .go-build { max-height: 64px; margin-bottom: 0.6rem; }
+    .gameover-content > .menu-btn { display: inline-block; min-width: 200px; margin: 0.2rem; }
+    .mp-over-buttons { width: min(560px, 100%); }
+
+    /* онлайн, профиль, лобби */
+    .online-card { width: min(640px, 96vw); max-height: none; padding: 0.9rem 1rem; gap: 0.45rem; }
+    .online-card h2 { font-size: 1.1rem; }
+    .menu-btn.big { min-height: 44px; padding: 0.55rem 1rem; font-size: 0.85rem; }
+    .menu-btn.small { min-height: 44px; }
+    .online-input { min-height: 44px; padding: 0.5rem 0.8rem; font-size: 1rem; }
+    .mode-btn { min-height: 42px; }
+    .lobby-code { font-size: 1.8rem; padding: 0.3rem 0.3rem 0.3rem 0.6rem; }
+    .lobby-player { min-height: 38px; padding: 0.3rem 0.6rem; }
+    #authForm { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.5rem; }
+    #authForm .online-input { grid-column: span 3; }
+    #authForm .online-error { grid-column: 1 / -1; min-height: 0; }
+    #authForm .menu-btn { grid-column: span 2; }
+
+    /* надпись старта раунда */
+    .round-start-text { font-size: 2.2rem; }
+    .round-start-time { font-size: 0.9rem; }
+
+    /* дерево эволюции: мельче и с прокруткой */
+    #evolutionTreeScreen { padding: 0; overflow: hidden; }
+    .evo-map-wrapper { align-items: flex-start; justify-content: flex-start; }
+    .evo-map { zoom: 0.58; margin: auto; }
+    .evo-node { width: 60px; height: 60px; font-size: 1.5rem; }
+    /* две колонки в онлайн-меню и лобби, кнопки на всю ширину под ними */
+    #onlineMenuScreen .online-card, #lobbyScreen .online-card { width: min(820px, 96vw); }
+    .card-cols { flex-direction: row; gap: 1rem; align-items: flex-start; }
+    .card-col { flex: 1; gap: 0.45rem; }
+    #lobbyScreen .online-card { display: grid; grid-template-columns: 1fr 1fr; column-gap: 1rem; row-gap: 0.45rem; }
+    #lobbyScreen .online-card > h2, #lobbyScreen .online-card > .card-cols { grid-column: 1 / -1; }
+    #lobbyScreen .online-card > .menu-btn { width: 100%; }
+    .evo-top-bar { top: 0.5rem; left: max(0.5rem, env(safe-area-inset-left, 0px)); padding: 0.5rem 0.8rem; }
+    .evo-points-display { font-size: 0.85rem; }
+    .evo-tree-subtitle { display: none; }
+    .evo-close-btn { bottom: 0.6rem; right: max(0.6rem, env(safe-area-inset-right, 0px)); padding: 0.6rem 1.2rem; }
+
+    /* HUD в бою */
+    body.touch-mode .hud-top { padding-top: 0; }
+    body.touch-mode .hud-boss { top: 2.6rem; width: min(440px, 46vw); }
+}
+@media (max-height: 430px) and (orientation: landscape) {
+    .evo-map { zoom: 0.48; }
+    .evo-node { width: 68px; height: 68px; font-size: 1.7rem; }
+}
+@media (min-height: 521px) and (max-height: 760px) {
+    .evo-map { zoom: 0.82; }
+}
+
+/* вертикальный телефон: между джойстиками мало места, DASH поднимаем над правым */
+@media (orientation: portrait) {
+    .touch-dash { right: 38px; bottom: calc(210px + env(safe-area-inset-bottom, 0px)); }
+}

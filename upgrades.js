@@ -229,8 +229,8 @@ const UpgradeSystem = (() => {
           effect: (p) => { p.chainLightning += 3; }, maxStacks: 1, prereq: ['chain_1'] },
 
         { id: 'beam_1', name: 'Beam Emitter', category: 'WEAPON', rarity: 'epic', timeCost: 8,
-          description: 'Continuous beam weapon', tags: ['beam'],
-          effect: (p) => { p.beamWeapon = true; p.beamDamage = p.damage * 0.35; }, maxStacks: 1 },
+          description: 'Shots become piercing lasers', tags: ['beam'],
+          effect: (p) => { p.beamWeapon = true; p.beamMult = 0.7; }, maxStacks: 1 },
 
         // ========== ELEMENTAL ==========
         { id: 'fire_1', name: 'Incendiary Rounds', category: 'ELEMENTAL', rarity: 'uncommon', timeCost: 3,
@@ -544,7 +544,7 @@ const UpgradeSystem = (() => {
         { id: 'velocity_force', name: 'VELOCITY FORCE', requires: ['speed', 'dash_damage'],
           description: 'Dash damage +35', effect: (p) => { p.dashDamage += 35; p.speed *= 1.1; } },
         { id: 'coherent_beam', name: 'COHERENT BEAM', requires: ['beam', 'crit'],
-          description: 'Beam crits', effect: (p) => { p.critChance = Math.min(0.8, p.critChance + 0.15); if (p.beamDamage) p.beamDamage *= 1.35; } },
+          description: 'Beam crits', effect: (p) => { p.critChance = Math.min(0.8, p.critChance + 0.15); if (p.beamWeapon) p.beamMult = (p.beamMult || 0.7) * 1.35; } },
         { id: 'shock_drone', name: 'TESLA DRONES', requires: ['drone', 'electric'],
           description: 'Drones shock', effect: (p) => { p.chainLightning = Math.max(p.chainLightning, 2); } },
         { id: 'spiked_plating', name: 'SPIKED PLATING', requires: ['hp', 'defense'],

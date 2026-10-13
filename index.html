@@ -1,13 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>ZERO//30: LAST CYCLE</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20261013b">
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
+    <div id="rotateHint" class="rotate-hint">Поверните телефон горизонтально</div>
 
     <!-- MAIN MENU -->
     <div id="mainMenu" class="screen active">
@@ -16,44 +21,129 @@
             <h1 class="game-title">ZERO<span class="slash">//</span>30</h1>
             <p class="subtitle">LAST CYCLE</p>
             <div class="menu-buttons">
-                <button class="menu-btn" id="btnPlay">▶ INITIATE RUN</button>
-                <button class="menu-btn" id="btnSettings">⚙ SETTINGS</button>
+                <button class="menu-btn" id="btnPlay">INITIATE RUN</button>
+                <button class="menu-btn online-btn" id="btnOnline">ONLINE</button>
+                <button class="menu-btn" id="btnProfile">PROFILE</button>
+                <button class="menu-btn" id="btnSettings">SETTINGS</button>
             </div>
             <p class="version">v2.0 // EVOLUTION BUILD</p>
+        </div>
+    </div>
+
+    <!-- PROFILE -->
+    <div id="profileScreen" class="screen">
+        <div class="online-card">
+            <h2>PROFILE</h2>
+            <div id="profNotice" class="online-sub hidden"></div>
+            <div id="profAuth" class="online-form">
+                <p class="online-sub">Вход по логину и паролю, почта не нужна</p>
+                <form id="authForm" class="online-form" autocomplete="on" onsubmit="return false">
+                    <input id="authLogin" class="online-input" type="text" placeholder="Логин (латиница, цифры, _)" maxlength="16" autocomplete="username" autocapitalize="off" spellcheck="false">
+                    <input id="authPassword" class="online-input" type="password" placeholder="Пароль (от 6 символов)" maxlength="64" autocomplete="current-password">
+                    <div id="authError" class="online-error"></div>
+                    <button type="button" class="menu-btn big" id="btnAuthLogin">ВОЙТИ</button>
+                    <button type="button" class="menu-btn big alt" id="btnAuthRegister">РЕГИСТРАЦИЯ</button>
+                    <button type="button" class="menu-btn big ghost" id="btnAuthGuest">ИГРАТЬ КАК ГОСТЬ</button>
+                </form>
+            </div>
+            <div id="profUser" class="online-form hidden">
+                <div class="online-user">Логин: <b id="profName">-</b> <span id="profGuestBadge" class="badge hidden">гость</span></div>
+                <p id="profGuestHint" class="online-sub hidden">Гостевой аккаунт: прогресс не сохраняется. Зарегистрируйтесь, чтобы он сохранялся.</p>
+                <div id="profGuestRow" class="online-row hidden">
+                    <input id="profGuestName" class="online-input" type="text" placeholder="Ваш ник" maxlength="16" autocapitalize="off" spellcheck="false">
+                    <button class="menu-btn small" id="btnGuestName">OK</button>
+                </div>
+                <div id="profError" class="online-error"></div>
+                <button class="menu-btn big ghost" id="btnLogout">ВЫЙТИ ИЗ АККАУНТА</button>
+            </div>
+            <button class="menu-btn big ghost" id="btnProfileBack">НАЗАД</button>
+        </div>
+    </div>
+
+    <!-- ONLINE: МЕНЮ -->
+    <div id="onlineMenuScreen" class="screen">
+        <div class="online-card">
+            <h2>ONLINE</h2>
+            <div class="card-cols">
+                <div class="card-col">
+                    <div class="online-label">Режим новой комнаты</div>
+                    <div class="mode-toggle">
+                        <button class="mode-btn active" data-mode="coop" id="omModeCoop">КООПЕРАТИВ</button>
+                        <button class="mode-btn" data-mode="pvp" id="omModePvp">PVP</button>
+                    </div>
+                    <p id="omModeHint" class="online-sub"></p>
+                    <button class="menu-btn big" id="btnCreateRoom">СОЗДАТЬ КОМНАТУ</button>
+                </div>
+                <div class="card-col">
+                    <div class="online-label">Войти по коду</div>
+                    <div class="online-row">
+                        <input id="omCode" class="online-input code" type="text" placeholder="КОД" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false">
+                        <button class="menu-btn small" id="btnJoinRoom">ВОЙТИ</button>
+                    </div>
+                    <div id="omError" class="online-error"></div>
+                </div>
+            </div>
+            <button class="menu-btn big ghost" id="btnOnlineBack">НАЗАД</button>
+        </div>
+    </div>
+
+    <!-- ONLINE: ЛОББИ -->
+    <div id="lobbyScreen" class="screen">
+        <div class="online-card">
+            <h2>ЛОББИ</h2>
+            <div class="card-cols">
+                <div class="card-col">
+                    <div class="online-label">Код комнаты (нажмите, чтобы скопировать)</div>
+                    <button id="lobbyCode" class="lobby-code">------</button>
+                    <div class="mode-toggle">
+                        <button class="mode-btn" data-mode="coop" id="lobbyModeCoop">КООПЕРАТИВ</button>
+                        <button class="mode-btn" data-mode="pvp" id="lobbyModePvp">PVP</button>
+                    </div>
+                    <p id="lobbyModeHint" class="online-sub"></p>
+                </div>
+                <div class="card-col">
+                    <div class="online-label">Игроки <span id="lobbyCount"></span></div>
+                    <div id="lobbyPlayers" class="lobby-players"></div>
+                    <p id="lobbyHint" class="online-sub"></p>
+                    <div id="lobbyError" class="online-error"></div>
+                </div>
+            </div>
+            <button class="menu-btn big" id="btnLobbyStart">СТАРТ</button>
+            <button class="menu-btn big ghost" id="btnLobbyLeave">ПОКИНУТЬ КОМНАТУ</button>
         </div>
     </div>
 
     <!-- PAUSE MENU -->
     <div id="pauseMenu" class="screen">
         <div class="pause-content">
-            <h2>◫ SYSTEM PAUSED</h2>
-            <button class="menu-btn" id="btnResume">▶ RESUME</button>
-            <button class="menu-btn" id="btnPauseSettings">⚙ SETTINGS</button>
-            <button class="menu-btn" id="btnQuit">✕ QUIT TO MENU</button>
+            <h2>SYSTEM PAUSED</h2>
+            <button class="menu-btn" id="btnResume">RESUME</button>
+            <button class="menu-btn" id="btnPauseSettings">SETTINGS</button>
+            <button class="menu-btn" id="btnQuit">QUIT TO MENU</button>
         </div>
     </div>
 
     <!-- UPGRADE SCREEN -->
     <div id="upgradeScreen" class="screen">
         <div class="upgrade-header">
-            <h2>◈ SYSTEM UPGRADE DETECTED</h2>
-            <p id="upgradeRoundInfo">Round <span id="upRound">1</span> Complete — Next Duration: <span id="upNextTime">30</span>s</p>
-            <button class="menu-btn evo-btn" id="btnOpenEvoTree" style="display:none;margin-top:0.5rem;">✦ EVOLUTION TREE</button>
+            <h2>SYSTEM UPGRADE DETECTED</h2>
+            <p id="upgradeRoundInfo">Round <span id="upRound">1</span> Complete — Next Duration: <span id="upNextTime">30</span> sec</p>
+            <button class="menu-btn evo-btn" id="btnOpenEvoTree" style="display:none;margin-top:0.5rem;">EVOLUTION TREE</button>
         </div>
         <div id="upgradeCards" class="upgrade-cards"></div>
-        <p class="upgrade-hint">Press 1-6 or click to select • Press T during combat for Evolution Tree</p>
+        <p class="upgrade-hint">Press 1-6 or click to select. Press T during combat for Evolution Tree</p>
     </div>
 
     <!-- EVOLUTION TREE SCREEN -->
     <div id="evolutionTreeScreen" class="screen">
         <div class="evo-tree-container">
             <div class="evo-tree-header">
-                <h2>✦ EVOLUTION TREE</h2>
+                <h2>EVOLUTION TREE</h2>
                 <div class="evo-points-display">EVOLUTION POINTS: <span id="evoPoints">0</span></div>
                 <p class="evo-tree-subtitle">Choose ONE primary branch per run. Click an unlocked form to evolve.</p>
             </div>
             <div id="evoTreeContent" class="evo-tree-content"></div>
-            <button class="menu-btn" id="btnEvoClose">◁ CLOSE</button>
+            <button class="menu-btn" id="btnEvoClose">CLOSE</button>
         </div>
     </div>
 
@@ -63,15 +153,27 @@
             <h1 class="gameover-title">CYCLE TERMINATED</h1>
             <div id="goStats" class="go-stats"></div>
             <div id="goBuild" class="go-build"></div>
-            <button class="menu-btn" id="btnRestart">⟳ REINITIATE</button>
-            <button class="menu-btn" id="btnGoMenu">◁ MAIN MENU</button>
+            <button class="menu-btn" id="btnRestart">REINITIATE</button>
+            <button class="menu-btn" id="btnGoMenu">MAIN MENU</button>
+            <div id="mpOverButtons" class="mp-over-buttons hidden">
+                <button class="menu-btn big" id="btnMpLobby">ВСЕХ В ЛОББИ</button>
+                <p id="mpOverHint" class="online-sub"></p>
+                <button class="menu-btn big ghost" id="btnMpLeave">ПОКИНУТЬ КОМНАТУ</button>
+            </div>
         </div>
     </div>
 
     <!-- SETTINGS -->
     <div id="settingsScreen" class="screen">
         <div class="settings-content">
-            <h2>⚙ CONFIGURATION</h2>
+            <h2>CONFIGURATION</h2>
+            <div class="setting-row">
+                <label>Language</label>
+                <select id="selLang">
+                    <option value="ru">Русский</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
             <div class="setting-row">
                 <label>Master Volume</label>
                 <input type="range" id="volMaster" min="0" max="100" value="70">
@@ -98,7 +200,35 @@
                     <option value="low">Low</option>
                 </select>
             </div>
-            <button class="menu-btn" id="btnSettingsBack">◁ BACK</button>
+            <div class="setting-row">
+                <label>Zoom</label>
+                <select id="selZoom">
+                    <option value="auto" selected>Auto</option>
+                    <option value="near">Close</option>
+                    <option value="fit">Whole Arena</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>Quality</label>
+                <select id="selQuality">
+                    <option value="auto" selected>Auto</option>
+                    <option value="high">High</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>Phone Fullscreen</label>
+                <input type="checkbox" id="chkFullscreen" checked>
+            </div>
+            <div class="setting-row">
+                <label>Аккаунт</label>
+                <span id="setAccount" class="setting-value">не выполнен вход</span>
+            </div>
+            <div class="setting-row">
+                <label>UID</label>
+                <span id="setUid" class="setting-value uid">-</span>
+            </div>
+            <button class="menu-btn" id="btnSettingsBack">BACK</button>
         </div>
     </div>
 
@@ -127,6 +257,7 @@
         <div class="hud-bottom-right">
             <div class="hud-buffs" id="hudBuffs"></div>
         </div>
+        <div id="mpPanel" class="mp-panel hidden"></div>
         <div class="hud-boss" id="hudBoss" style="display:none">
             <div class="hud-boss-name" id="hudBossName"></div>
             <div class="hud-boss-bar">
@@ -136,13 +267,32 @@
     </div>
 
     <!-- ROUND START -->
+    <!-- Сенсорное управление (телефоны): левая половина — движение, правая — стрельба -->
+    <div id="touchLayer" class="touch-layer hidden">
+        <div id="joyMove" class="joy joy-move"><div class="joy-knob"></div></div>
+        <div id="joyAim" class="joy joy-aim"><div class="joy-knob"></div></div>
+        <button id="btnTouchDash" class="touch-dash">DASH</button>
+        <button id="btnTouchPause" class="touch-pause">PAUSE</button>
+    </div>
+
     <div id="roundStart" class="round-start hidden">
         <div class="round-start-text">ROUND <span id="rsRound">1</span></div>
         <div class="round-start-time"><span id="rsTime">30</span> SECONDS</div>
     </div>
 
-    <script src="upgrades.js"></script>
-    <script src="enemies.js"></script>
-    <script src="game.js"></script>
+    <!-- ONLINE: ожидание игроков после выбора улучшения -->
+    <div id="mpWait" class="mp-wait hidden">
+        <div class="mp-wait-title">ОЖИДАНИЕ ДРУГИХ ИГРОКОВ…</div>
+        <div id="mpWaitCount" class="mp-wait-count"></div>
+    </div>
+    <div id="mpToast" class="mp-toast"></div>
+
+    <script src="i18n.js?v=20261013b"></script>
+    <script src="upgrades.js?v=20261013b"></script>
+    <script src="enemies.js?v=20261013b"></script>
+    <script src="game.js?v=20261013b"></script>
+    <script src="net-core.js?v=20261013b"></script>
+    <script src="online-ui.js?v=20261013b"></script>
+    <script type="module" src="net.js?v=20261013b"></script>
 </body>
 </html>
