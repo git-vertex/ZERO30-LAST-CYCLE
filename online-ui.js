@@ -18,6 +18,7 @@
     let startingMatch = false;
     let busy = false;
     let newRoomMode = 'coop';
+    let afterLoginOnline = false; // пришли в профиль с кнопки ONLINE — после входа сразу в онлайн
 
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
 
@@ -62,7 +63,6 @@
         net.on('world', (w) => Game.netWorld(w));
         net.on('states', (s) => Game.netStates(s));
         net.on('hits', (h) => Game.netHits(h));
-        net.on('profile', renderProfile);
         net.on('error', (msg) => { console.warn(msg); toast(msg, 5000); });
         if (net.authReady) onAuth(net.user);
     }
@@ -81,9 +81,8 @@
         user = u;
         $('setAccount').textContent = u ? (u.login + (u.guest ? ' (гость)' : '')) : 'не выполнен вход';
         $('setUid').textContent = u ? u.uid : '—';
+        renderProfileScreen();
         if (u) {
-            if (isActive('onlineAuthScreen')) showOnlineMenu();
-            if (isActive('onlineMenuScreen')) renderOnlineMenu();
             if (!restoreTried) {
                 restoreTried = true;
                 net.restoreRoom().then(code => { if (code) toast('Возвращаем в комнату ' + code); }).catch(() => {});
@@ -91,36 +90,82 @@
         } else {
             restoreTried = false;
             if (Game.isOnline()) Game.stopOnline();
-            if (isActive('onlineMenuScreen') || isActive('lobbyScreen')) showScreen('onlineAuthScreen');
+            if (isActive('onlineMenuScreen') || isActive('lobbyScreen')) showScreen('mainMenu');
         }
     }
 
+    function netProblem() {
+        if (netFailed) { toast('Онлайн недоступен: Firebase не загрузился (нет интернета или сайт открыт как файл)', 5000); return true; }
+        if (!net || !net.authReady) { toast('Подключение к серверу...'); return true; }
+        return false;
+    }
+
     $('btnOnline').addEventListener('click', () => {
-        if (netFailed) { toast('Онлайн недоступен: Firebase не загрузился (нет интернета или сайт открыт как файл)', 5000); return; }
-        if (!net || !net.authReady) { toast('Подключение к серверу…'); return; }
-        if (!user) { showScreen('onlineAuthScreen'); $('authError').textContent = ''; return; }
+        if (netProblem()) return;
+        if (!user) { showProfile(true); return; }
         if (net.room) { showLobby(); return; }
         showOnlineMenu();
     });
 
+    // ------------------------------------------------------------
+    // ПРОФИЛЬ (главное меню): вход, регистрация, гость, выход
+    // ------------------------------------------------------------
+    $('btnProfile').addEventListener('click', () => { if (!netProblem()) showProfile(false); });
+
+    function showProfile(forOnline) {
+        afterLoginOnline = !!forOnline;
+        $('authError').textContent = ''; $('profError').textContent = '';
+        const notice = $('profNotice');
+        notice.textContent = forOnline ? 'Войдите, чтобы играть онлайн' : '';
+        notice.classList.toggle('hidden', !forOnline);
+        renderProfileScreen();
+        showScreen('profileScreen');
+    }
+
+    function renderProfileScreen() {
+        const signedIn = !!user;
+        $('profAuth').classList.toggle('hidden', signedIn);
+        $('profUser').classList.toggle('hidden', !signedIn);
+        if (!signedIn) return;
+        $('profName').textContent = user.login;
+        $('profGuestBadge').classList.toggle('hidden', !user.guest);
+        $('profGuestHint').classList.toggle('hidden', !user.guest);
+        $('profGuestRow').classList.toggle('hidden', !user.guest);
+        if (user.guest && document.activeElement !== $('profGuestName')) $('profGuestName').value = user.login;
+    }
+
+    function afterLogin() {
+        $('authPassword').value = '';
+        if (afterLoginOnline) { afterLoginOnline = false; if (net.room) showLobby(); else showOnlineMenu(); return; }
+        $('profNotice').classList.add('hidden');
+        renderProfileScreen();
+    }
+
     const authBtns = () => [$('btnAuthLogin'), $('btnAuthRegister'), $('btnAuthGuest')];
     $('btnAuthLogin').addEventListener('click', () => run(authBtns(), $('authError'), async () => {
         await net.login($('authLogin').value, $('authPassword').value);
-        $('authPassword').value = '';
-        showOnlineMenu();
+        afterLogin();
     }));
     $('btnAuthRegister').addEventListener('click', () => run(authBtns(), $('authError'), async () => {
         await net.register($('authLogin').value, $('authPassword').value);
-        $('authPassword').value = '';
-        toast('Аккаунт создан!');
-        showOnlineMenu();
+        toast('Аккаунт создан');
+        afterLogin();
     }));
     $('btnAuthGuest').addEventListener('click', () => run(authBtns(), $('authError'), async () => {
         await net.loginGuest();
-        showOnlineMenu();
+        afterLogin();
     }));
     $('authPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnAuthLogin').click(); });
-    $('btnAuthBack').addEventListener('click', () => showScreen('mainMenu'));
+    $('btnGuestName').addEventListener('click', () => {
+        $('profError').textContent = '';
+        try { net.setGuestName($('profGuestName').value); toast('Ник сохранён'); renderProfileScreen(); }
+        catch (e) { $('profError').textContent = e.userMessage || String(e); }
+    });
+    $('btnLogout').addEventListener('click', () => run([$('btnLogout')], $('profError'), async () => {
+        await net.logout();
+        renderProfileScreen();
+    }));
+    $('btnProfileBack').addEventListener('click', () => { afterLoginOnline = false; showScreen('mainMenu'); });
 
     // ------------------------------------------------------------
     // ОНЛАЙН-МЕНЮ
@@ -133,20 +178,7 @@
 
     function renderOnlineMenu() {
         if (!user) return;
-        $('omUser').textContent = user.login;
-        $('omGuestBadge').classList.toggle('hidden', !user.guest);
-        $('omGuestRow').classList.toggle('hidden', !user.guest);
-        if (user.guest) $('omGuestName').value = user.login;
-        renderProfile(net.profile);
         setNewRoomMode(newRoomMode);
-    }
-
-    function renderProfile(p) {
-        if (!user) return;
-        if (user.guest) { $('omStats').textContent = 'Гость: прогресс не сохраняется. Зарегистрируйтесь, чтобы хранить рекорды.'; return; }
-        if (!p) { $('omStats').textContent = 'Профиль: пока нет сыгранных матчей'; return; }
-        $('omStats').innerHTML = `Лучший раунд: <b>${p.bestRound || 0}</b> · Рекорд убийств: <b>${p.bestKills || 0}</b><br>` +
-            `Игр: <b>${p.totalRuns || 0}</b> · PvP побед: <b>${p.pvpWins || 0}</b>/${p.pvpMatches || 0}`;
     }
 
     function setNewRoomMode(mode) {
@@ -158,10 +190,6 @@
     $('omModeCoop').addEventListener('click', () => setNewRoomMode('coop'));
     $('omModePvp').addEventListener('click', () => setNewRoomMode('pvp'));
 
-    $('btnGuestName').addEventListener('click', () => {
-        try { net.setGuestName($('omGuestName').value); toast('Ник сохранён'); renderOnlineMenu(); }
-        catch (e) { $('omError').textContent = e.userMessage || String(e); }
-    });
 
     const roomBtns = () => [$('btnCreateRoom'), $('btnJoinRoom')];
     $('btnCreateRoom').addEventListener('click', () => run(roomBtns(), $('omError'), async () => {
@@ -175,10 +203,6 @@
     }));
     $('omCode').addEventListener('input', (e) => { e.target.value = net ? net.normalizeCode(e.target.value) : e.target.value.toUpperCase(); });
     $('omCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoinRoom').click(); });
-    $('btnLogout').addEventListener('click', () => run([$('btnLogout')], $('omError'), async () => {
-        await net.logout();
-        showScreen('mainMenu');
-    }));
     $('btnOnlineBack').addEventListener('click', () => showScreen('mainMenu'));
 
     // ------------------------------------------------------------
@@ -212,15 +236,15 @@
             if (p.uid === info.uid) tags.push('<span class="badge me">вы</span>');
             if (p.guest) tags.push('<span class="badge">гость</span>');
             if (p.online === false) tags.push('<span class="badge off">нет связи</span>');
-            return `<div class="lobby-player${p.online === false ? ' offline' : ''}"><span class="mp-dot" style="background:${color}"></span><span class="lp-name">${esc(p.name)}</span>${tags.join('')}</div>`;
+            return `<div class="lobby-player${p.online === false ? ' offline' : ''}"><span class="lp-name" style="color:${color}">${esc(p.name)}</span>${tags.join('')}</div>`;
         }).join('') + (list.length < max ? `<div class="lobby-player empty">Свободно мест: ${max - list.length}</div>` : '');
         const startBtn = $('btnLobbyStart');
         startBtn.style.display = isHost ? '' : 'none';
         startBtn.disabled = online < min;
-        startBtn.textContent = `▶ СТАРТ (${online}/${max})`;
+        startBtn.textContent = `СТАРТ (${online}/${max})`;
         $('lobbyHint').textContent = isHost
             ? (online < min ? `Нужно минимум ${min} игрока. Отправьте друзьям код ${info.code}` : 'Все готовы? Жмите «Старт»')
-            : 'Ждём, когда хост нажмёт «Старт»…';
+            : 'Ждём, когда хост нажмёт «Старт»';
     }
 
     $('lobbyCode').addEventListener('click', () => {
@@ -284,7 +308,7 @@
         const host = info.players[info.meta.host];
         if (host && host.online !== false) { disarmHostGone(); return; }
         if (hostGoneTimer) return;
-        toast('Хост потерял связь. Ждём до 20 секунд…', 5000);
+        toast('Хост потерял связь. Ждём до 20 секунд', 5000);
         hostGoneTimer = setTimeout(async () => {
             hostGoneTimer = null;
             const room = net.room;

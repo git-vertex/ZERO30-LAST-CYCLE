@@ -24,7 +24,7 @@
         if (/network-request-failed|unavailable|offline|disconnected/i.test(code)) return 'Нет связи';
         if (/too-many-requests/.test(code)) return 'Слишком много попыток. Подождите минуту';
         if (/weak-password/.test(code)) return 'Пароль слишком простой (минимум 6 символов)';
-        if (/admin-restricted-operation/.test(code)) return 'Вход гостем не включён в Firebase (Authentication → Sign-in method → Anonymous)';
+        if (/admin-restricted-operation/.test(code)) return 'Вход гостем не включён в Firebase (Authentication, вкладка Sign-in method, способ Anonymous)';
         if (/operation-not-allowed/.test(code)) return 'Этот способ входа не включён в консоли Firebase';
         if (/permission[-_ ]denied/i.test(code)) return 'Нет доступа (permission-denied): опубликуйте правила из папки firebase/ в консоли Firebase';
         if (err && err.userMessage) return err.userMessage;

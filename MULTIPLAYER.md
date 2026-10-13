@@ -1,20 +1,20 @@
 # Мультиплеер ZERO//30
 
-Кнопка **🌐 ОНЛАЙН** в главном меню. Режимы: **Кооператив** и **PvP**, до 4 игроков в комнате (старт от 2).
+Кнопка **ONLINE** в главном меню (вход в аккаунт — кнопка **PROFILE**). Режимы: **Кооператив** и **PvP**, до 4 игроков в комнате (старт от 2).
 
 ## Что нужно сделать в консоли Firebase (один раз)
 
 Проект: `zero30-last-cycle`. Делайте по шагам, по одному.
 
-1. Откройте https://console.firebase.google.com → проект **zero30-last-cycle**.
-2. **Build → Authentication → Sign-in method → Email/Password** → включите первый переключатель → **Save**.
+1. Откройте https://console.firebase.google.com и выберите проект **zero30-last-cycle**.
+2. Слева **Build**, затем **Authentication**, вкладка **Sign-in method**, способ **Email/Password**. Включите первый переключатель и нажмите **Save**.
    Подтверждать почту не нужно: логин превращается в служебный адрес `логин@zero30-last-cycle.app` только внутри Firebase.
-3. Там же, **Sign-in method → Add new provider → Anonymous** → **Enable** → **Save**. Без этого не работает кнопка «Играть как гость».
-4. **Build → Realtime Database → вкладка Rules**. Удалите весь текст, вставьте содержимое файла
-   [`firebase/database.rules.json`](firebase/database.rules.json) → **Publish**.
-5. **Build → Firestore Database → вкладка Rules**. Удалите весь текст, вставьте содержимое файла
-   [`firebase/firestore.rules`](firebase/firestore.rules) → **Publish**.
-6. **Authentication → Settings → Authorized domains → Add domain** → `git-vertex.github.io` → **Add**.
+3. Там же на вкладке **Sign-in method** нажмите **Add new provider**, выберите **Anonymous**, включите **Enable** и нажмите **Save**. Без этого не работает кнопка «Играть как гость».
+4. Слева **Build**, затем **Realtime Database**, вкладка **Rules**. Удалите весь текст, вставьте содержимое файла
+   [`firebase/database.rules.json`](firebase/database.rules.json) и нажмите **Publish**.
+5. Слева **Build**, затем **Firestore Database**, вкладка **Rules**. Удалите весь текст, вставьте содержимое файла
+   [`firebase/firestore.rules`](firebase/firestore.rules) и нажмите **Publish**.
+6. В **Authentication** откройте вкладку **Settings**, раздел **Authorized domains**, нажмите **Add domain**, введите `git-vertex.github.io` и нажмите **Add**.
 
 Если в игре появляется «Нет доступа (permission-denied)», значит, правила из шагов 4–5 не опубликованы или вставлены не полностью.
 

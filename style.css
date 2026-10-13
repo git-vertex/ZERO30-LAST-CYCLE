@@ -1108,12 +1108,11 @@ canvas {
 }
 .lobby-player.offline { opacity: 0.5; }
 .lobby-player.empty { color: var(--text-dim); justify-content: center; border-style: dashed; font-size: 0.85rem; }
-.lp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
 .badge { font-size: 0.65rem; padding: 0.15rem 0.45rem; border: 1px solid #44445e; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
 .badge.host { border-color: var(--gold); color: var(--gold); }
 .badge.me { border-color: var(--cyan); color: var(--cyan); }
 .badge.off { border-color: var(--crimson); color: var(--crimson); }
-.mp-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-right: 0.35rem; vertical-align: middle; }
 
 /* HUD: список игроков */
 .mp-panel {
@@ -1126,11 +1125,10 @@ canvas {
     font-size: 0.78rem;
 }
 .mp-panel-title { font-family: 'Orbitron', sans-serif; font-size: 0.65rem; color: var(--text-dim); letter-spacing: 0.15em; margin-bottom: 0.35rem; }
-.mp-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; column-gap: 0.4rem; margin-bottom: 0.35rem; }
-.mp-row .mp-dot { width: 9px; height: 9px; margin: 0; }
+.mp-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; column-gap: 0.4rem; margin-bottom: 0.35rem; }
 .mp-row.dead { opacity: 0.45; }
 .mp-row.offline { opacity: 0.35; }
-.mp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
 .mp-lv { color: var(--violet); }
 .mp-kills { color: var(--text-dim); }
 .mp-hp { grid-column: 1 / -1; height: 4px; background: rgba(255,255,255,0.08); margin-top: 2px; }
