@@ -166,9 +166,10 @@ class Pool {
 }
 
 const Particles = (() => {
-    const pool = new Pool(() => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, r: 0, g: 0, b: 0, size: 2, decay: 1 }), (p) => { p.life = 0; }, 500);
+    const pool = new Pool(() => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, r: 0, g: 0, b: 0, css: '#fff', size: 2, decay: 1 }), (p) => { p.life = 0; }, 500);
     let particleLevel = 'medium';
     const limits = { high: 600, medium: 300, low: 100 };
+    const colorCache = new Map();
     function emit(x, y, count, color, opts = {}) {
         const maxP = limits[particleLevel] || 300;
         if (pool.active.length > maxP) return;
@@ -180,15 +181,18 @@ const Particles = (() => {
             const speed = opts.speed || rng(30, 120);
             p.x = x + rng(-2, 2); p.y = y + rng(-2, 2);
             p.vx = Math.cos(angle) * speed * rng(0.5, 1.5); p.vy = Math.sin(angle) * speed * rng(0.5, 1.5);
-            p.life = opts.life || rng(0.2, 0.6); p.maxLife = p.life; p.r = c.r; p.g = c.g; p.b = c.b;
+            p.life = opts.life || rng(0.2, 0.6); p.maxLife = p.life; p.r = c.r; p.g = c.g; p.b = c.b; p.css = c.css;
             p.size = opts.size || rng(1, 3); p.decay = opts.decay || 1;
         }
     }
     function parseColor(c) {
-        if (typeof c === 'object') return c;
+        if (typeof c === 'object') { if (!c.css) c.css = `rgb(${c.r},${c.g},${c.b})`; return c; }
+        const hit = colorCache.get(c); if (hit) return hit;
         const m = c.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
-        if (m) return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
-        return { r: 0, g: 240, b: 255 };
+        const out = m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 0, g: 240, b: 255 };
+        out.css = `rgb(${out.r},${out.g},${out.b})`;
+        if (colorCache.size < 200) colorCache.set(c, out);
+        return out;
     }
     function update(dt) {
         pool.update(dt, (p, dt) => {
@@ -200,7 +204,7 @@ const Particles = (() => {
     function draw(ctx) {
         for (const p of pool.active) {
             ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
-            ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+            ctx.fillStyle = p.css;
             ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
         }
         ctx.globalAlpha = 1;
@@ -250,7 +254,7 @@ const Shake = (() => {
 // ============================================================
 const Game = (() => {
     const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
 
     let state = 'menu';
     let round = 1, roundTimer = DEFAULT_ROUND_DURATION, roundDuration = DEFAULT_ROUND_DURATION;
@@ -279,7 +283,7 @@ const Game = (() => {
         return {
             bestRound: 0, bestKills: 0, totalRuns: 0, totalKillsAll: 0, totalTimeAll: 0,
             discoveredUpgrades: [], discoveredSynergies: [], discoveredForms: [],
-            settings: { masterVol: 70, sfxVol: 80, shake: true, dmgNumbers: true, particles: 'medium' }
+            settings: { masterVol: 70, sfxVol: 80, shake: true, dmgNumbers: true, particles: 'medium', zoom: 'auto', quality: 'auto', fullscreen: true }
         };
     }
     function savePersistent() { try { localStorage.setItem('zero30_data', JSON.stringify(persistent)); } catch(e) {} }
@@ -321,14 +325,62 @@ const Game = (() => {
         (p) => { p.life = 0; p.source = null; }, 200
     );
 
+    // ---------- ЭКРАН, КАМЕРА, КАЧЕСТВО ----------
+    // Canvas рисуется в реальных пикселях экрана (devicePixelRatio), поэтому на телефоне картинка чёткая.
+    // На телефоне камера приближена и следует за игроком: видно не всю арену по высоте, зато всё крупнее.
+    let dpr = 1, viewW = 1, viewH = 1, cssScale = 1;
+    let camX = 0, camY = 0, camSnap = true, camFor = null, mouseSeen = false;
+    let dprCap = 2;                 // потолок плотности в режиме «Auto», снижается, если телефон не тянет
+    let needRedraw = true, lastDrawnState = null;
+    const perf = { t: 0, frames: 0, sum: 0, lowParticles: false };
+
+    function settingOf(k, def) { return (persistent.settings && persistent.settings[k] !== undefined) ? persistent.settings[k] : def; }
+
     function resize() {
-        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-        const scaleX = canvas.width / GAME_W, scaleY = canvas.height / GAME_H;
-        scale = Math.min(scaleX, scaleY);
-        offsetX = (canvas.width - GAME_W * scale) / 2; offsetY = (canvas.height - GAME_H * scale) / 2;
+        viewW = Math.max(1, window.innerWidth); viewH = Math.max(1, window.innerHeight);
+        const q = settingOf('quality', 'auto'), dev = window.devicePixelRatio || 1;
+        dpr = q === 'low' ? 1 : (q === 'high' ? Math.min(dev, 3) : Math.min(dev, dprCap));
+        canvas.width = Math.round(viewW * dpr); canvas.height = Math.round(viewH * dpr);
+        cssScale = viewScale();
+        camSnap = true; updateCamera(0);
+        needRedraw = true;
     }
 
-    function screenToGame(sx, sy) { return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale }; }
+    function viewScale() {
+        const fit = Math.min(viewW / GAME_W, viewH / GAME_H);
+        const z = settingOf('zoom', 'auto');
+        if (z === 'fit') return fit;
+        const phone = Touch.enabled || Math.min(viewW, viewH) < 500;
+        if (z === 'auto' && !phone) return fit;
+        const visible = z === 'near' ? 460 : 560;   // сколько единиц арены видно по короткой стороне экрана
+        return Math.max(fit, Math.min(viewW, viewH) / visible);
+    }
+
+    function updateCamera(dt) {
+        const visW = viewW / cssScale, visH = viewH / cssScale;
+        const f = player || { x: GAME_W / 2, y: GAME_H / 2 };
+        const tx = visW >= GAME_W ? (GAME_W - visW) / 2 : clamp(f.x - visW / 2, 0, GAME_W - visW);
+        const ty = visH >= GAME_H ? (GAME_H - visH) / 2 : clamp(f.y - visH / 2, 0, GAME_H - visH);
+        if (camSnap || !dt) { camX = tx; camY = ty; camSnap = false; }
+        else { const k = Math.min(1, dt * 10); camX += (tx - camX) * k; camY += (ty - camY) * k; }
+        scale = cssScale * dpr; offsetX = -camX * scale; offsetY = -camY * scale;
+        if (mouseSeen && !Touch.enabled) { const gp = screenToGame(mouseX, mouseY); mouseGameX = gp.x; mouseGameY = gp.y; }
+    }
+    function cameraCrops() { return viewW / cssScale < GAME_W - 1 || viewH / cssScale < GAME_H - 1; }
+
+    // Режим «Auto»: если в бою меньше ~45 кадров/с, снижаем плотность пикселей, потом количество частиц
+    function perfSample(rawMs) {
+        if (state !== 'playing' || settingOf('quality', 'auto') !== 'auto' || rawMs > 100) return;
+        perf.sum += rawMs; perf.frames++;
+        if (perf.sum < 2500) return;
+        const avg = perf.sum / perf.frames; perf.sum = 0; perf.frames = 0;
+        if (avg <= 22) return;
+        const dev = window.devicePixelRatio || 1;
+        if (dprCap > 1 && dev > 1) { dprCap = dprCap > 1.5 ? 1.5 : 1; resize(); }
+        else if (!perf.lowParticles) { perf.lowParticles = true; Particles.setLevel('low'); }
+    }
+
+    function screenToGame(sx, sy) { return { x: (sx * dpr - offsetX) / scale, y: (sy * dpr - offsetY) / scale }; }
 
     function initInput() {
         window.addEventListener('keydown', (e) => {
@@ -344,7 +396,7 @@ const Game = (() => {
         canvas.addEventListener('mousemove', (e) => {
             // настоящая мышь выключает сенсорный режим (синтетические события после касания игнорируем)
             if (performance.now() - Touch.lastTouchAt > 1000) Touch.setMode(false);
-            mouseX = e.clientX; mouseY = e.clientY;
+            mouseX = e.clientX; mouseY = e.clientY; mouseSeen = true;
             const gp = screenToGame(mouseX, mouseY);
             mouseGameX = gp.x; mouseGameY = gp.y;
         });
@@ -365,13 +417,13 @@ const Game = (() => {
         const RADIUS = 55;       // ход ручки в CSS-пикселях
         const DEAD = 0.12;       // мёртвая зона
         const AIM_MIN = 0.25;    // с какого отклонения правый джойстик меняет направление
-        let layer = null, enabled = false, shown = false;
-        let aimDir = { x: 1, y: 0 };
+        let layer = null, enabled = false, shown = false, dashBtn = null, pauseBtn = null, hudEl = null;
+        let aimDir = { x: 1, y: 0 }, dashQueued = false, dashState = '';
         const sticks = {
             move: { id: null, ox: 0, oy: 0, vx: 0, vy: 0, mag: 0, el: null, knob: null },
             aim:  { id: null, ox: 0, oy: 0, vx: 0, vy: 0, mag: 0, el: null, knob: null }
         };
-        const api = { lastTouchAt: -1e9, init, setMode, sync, move: sticks.move, aim: sticks.aim, applyAim, get enabled() { return enabled; } };
+        const api = { lastTouchAt: -1e9, init, setMode, sync, move: sticks.move, aim: sticks.aim, applyAim, takeDash, goFullscreen, get enabled() { return enabled; } };
 
         function init() {
             layer = document.getElementById('touchLayer');
@@ -383,7 +435,17 @@ const Game = (() => {
             layer.addEventListener('touchmove', onMove, { passive: false });
             layer.addEventListener('touchend', onEnd, { passive: false });
             layer.addEventListener('touchcancel', onEnd, { passive: false });
-            document.getElementById('btnTouchPause').addEventListener('click', (e) => { e.stopPropagation(); menuKey(); });
+            pauseBtn = document.getElementById('btnTouchPause'); hudEl = document.getElementById('hud');
+            pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); menuKey(); });
+            // рывок: срабатывает сразу при касании, без задержки click
+            dashBtn = document.getElementById('btnTouchDash');
+            dashBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); dashQueued = true; dashBtn.classList.add('pressed'); }, { passive: false });
+            dashBtn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); dashBtn.classList.remove('pressed'); }, { passive: false });
+            dashBtn.addEventListener('click', (e) => { e.stopPropagation(); dashQueued = true; });
+            // на телефоне при старте игры разворачиваем страницу на весь экран (нужно действие пользователя)
+            for (const id of ['btnPlay', 'btnRestart', 'btnCreateRoom', 'btnJoinRoom', 'btnLobbyStart', 'btnResume']) {
+                const b = document.getElementById(id); if (b) b.addEventListener('click', goFullscreen);
+            }
             // телефон или планшет: основной указатель — палец
             let coarse = false;
             try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (e) {}
@@ -395,27 +457,46 @@ const Game = (() => {
             enabled = on;
             document.body.classList.toggle('touch-mode', on);
             if (!on) { releaseAll(); if (layer) layer.classList.add('hidden'); shown = false; }
+            resize(); // на телефоне другой масштаб камеры
         }
+
+        function goFullscreen() {
+            if (!enabled || !settingOf('fullscreen', true)) return;
+            const el = document.documentElement;
+            if (document.fullscreenElement || document.webkitFullscreenElement) return;
+            const req = el.requestFullscreen || el.webkitRequestFullscreen;
+            if (!req) return; // iPhone: Safari не умеет, страница остаётся как есть
+            try {
+                const pr = req.call(el, { navigationUI: 'hide' });
+                const lock = () => { try { const o = screen.orientation; if (o && o.lock) o.lock('landscape').catch(() => {}); } catch (e) {} };
+                if (pr && pr.then) pr.then(lock).catch(() => {}); else lock();
+            } catch (e) {}
+        }
+
+        // нажатие DASH действует один кадр: если рывок на перезарядке, оно просто пропадает
+        function takeDash() { const d = dashQueued; dashQueued = false; return d; }
 
         // показываем джойстики только в бою, чтобы они не перекрывали меню
         function sync() {
             if (!layer) return;
-            const hudOn = !document.getElementById('hud').classList.contains('hidden');
+            const hudOn = !hudEl.classList.contains('hidden');
             const want = enabled && hudOn && (state === 'playing' || state === 'roundStart');
             if (want !== shown) {
                 shown = want;
                 layer.classList.toggle('hidden', !want);
                 if (!want) releaseAll();
             }
-            const pauseBtn = document.getElementById('btnTouchPause');
             const label = mp ? 'MENU' : 'PAUSE';
             if (pauseBtn.textContent !== label) pauseBtn.textContent = label;
+            if (!shown || !player) return;
+            const ds = (player.dashTimer > 0 || player.dashCharges <= 0) ? 'cooldown' : 'ready';
+            if (ds !== dashState) { dashState = ds; dashBtn.classList.toggle('cooldown', ds === 'cooldown'); }
         }
 
         function stickFor(id) { return sticks.move.id === id ? sticks.move : (sticks.aim.id === id ? sticks.aim : null); }
 
         function onStart(e) {
-            if (e.target.closest && e.target.closest('button')) return; // кнопка паузы
+            if (onButton(e)) return; // кнопка паузы
             e.preventDefault();
             for (const t of e.changedTouches) {
                 const st = t.clientX < window.innerWidth / 2 ? sticks.move : sticks.aim;
@@ -432,12 +513,17 @@ const Game = (() => {
             }
         }
 
+        // касания кнопок (PAUSE) не трогаем, иначе браузер не пришлёт по ним click
+        const onButton = (e) => !!(e.target && e.target.closest && e.target.closest('button'));
+
         function onMove(e) {
+            if (onButton(e)) return;
             e.preventDefault();
             for (const t of e.changedTouches) { const st = stickFor(t.identifier); if (st) update(st, t.clientX, t.clientY); }
         }
 
         function onEnd(e) {
+            if (onButton(e)) return;
             e.preventDefault();
             for (const t of e.changedTouches) { const st = stickFor(t.identifier); if (st) release(st); }
         }
@@ -479,8 +565,10 @@ const Game = (() => {
     })();
 
     function loop(time) {
-        const dt = Math.min(Math.max((time - lastTime) / 1000, 0), 0.05);
+        const rawMs = time - lastTime;
+        const dt = Math.min(Math.max(rawMs / 1000, 0), 0.05);
         lastTime = time;
+        perfSample(rawMs);
         if (state === 'playing') {
             update(dt);
         }
@@ -495,7 +583,14 @@ const Game = (() => {
         }
         if (mp) mpFrame(dt);
         Touch.sync();
-        render();
+        // в меню, на паузе и на экране улучшений картинка не меняется: не перерисовываем зря (экономит батарею)
+        const live = !!mp || state === 'playing' || state === 'roundStart';
+        if (live || needRedraw || state !== lastDrawnState) {
+            if (player !== camFor) { camFor = player; camSnap = true; }
+            updateCamera(dt);
+            render();
+            needRedraw = false; lastDrawnState = state;
+        }
         requestAnimationFrame(loop);
     }
 
@@ -526,7 +621,8 @@ const Game = (() => {
             p.x = clamp(p.x + p.vx * dt, p.size, GAME_W - p.size);
             p.y = clamp(p.y + p.vy * dt, p.size, GAME_H - p.size);
 
-            if (keys['Space'] && p.dashTimer <= 0 && p.dashCharges > 0) performDash();
+            const touchDash = Touch.takeDash();
+            if ((keys['Space'] || touchDash) && p.dashTimer <= 0 && p.dashCharges > 0) performDash();
             p.dashTimer = Math.max(0, p.dashTimer - dt);
             if (p.dashTimer <= 0 && p.dashCharges < p.dashMaxCharges) p.dashCharges = p.dashMaxCharges;
 
@@ -1108,6 +1204,7 @@ const Game = (() => {
             phase: 'start', readyRound: 0, upgradeWait: 0,
             dead: false, respawnTimer: 0, kb: {}, myKills: 0, pvpKillsSeen: 0,
             build: [], buildDirty: true, nextEnemyId: 1, proxies: new Map(),
+            lastSent: {}, lastWorldSent: {}, eiSent: new Set(),
             menuOpen: false, over: false, hudTimer: 0, boss: '', finalRes: ''
         };
         player = createPlayer(); enemies = []; projPool.releaseAll(); eProjPool.releaseAll(); rprojs = [];
@@ -1155,7 +1252,7 @@ const Game = (() => {
         roundTimer = typeof w.t === 'number' ? w.t : DEFAULT_ROUND_DURATION;
         mp.teamXp = mp.lastTeamXp = w.xp || 0; mp.teamEp = mp.lastTeamEp = w.epb || 0; mp.lastEps = w.eps || 0; mp.lastDxs = w.dxs || 0;
         kills = mp.mode === 'coop' ? (w.kills || 0) : 0;
-        if (mp.isHost && mp.mode === 'coop') mpRestoreEnemies(w.en || '');
+        if (mp.isHost && mp.mode === 'coop') mpRestoreEnemies(w.en || '', w.ei || {});
         mp.phase = w.ph === 'start' ? 'playing' : (w.ph || 'playing');
         if (w.ph === 'over') { mpShowOver(w); return; }
         if (w.ph === 'upgrading') {
@@ -1165,9 +1262,10 @@ const Game = (() => {
         mp.buildDirty = true; mp.forceSend = true;
     }
 
-    function mpRestoreEnemies(str) {
+    function mpRestoreEnemies(str, ei) {
         enemies = [];
-        for (const d of mpDecodeEnemies(str)) {
+        mp.eiSent = new Set(Object.keys(ei).map(k => parseInt(k, 36)));
+        for (const d of mpDecodeEnemies(str, ei)) {
             let e;
             if (d.flags & 1) e = EnemyTypes.createBoss(round);
             else { e = EnemyTypes.create(d.type, round); if (d.flags & 2) EnemyTypes.makeElite(e, round); }
@@ -1218,37 +1316,60 @@ const Game = (() => {
     function mpActiveRemotes() { return Object.values(mp.remotes).filter(rm => rm.online); }
 
     // ---------- ВРАГИ: кодирование снимка (хост рассылает всем) ----------
-    function mpEncodeEnemies() {
-        const out = [];
+    // Снимок врагов делится на две части:
+    //   en — то, что меняется каждый тик: id, x, y, hp, флаги (числа в base36, ~14 символов на врага)
+    //   ei/{id} — неизменное: размер, max hp, цвет, урон, тип. Пишется один раз при появлении врага и
+    //   удаляется после его смерти, поэтому по сети почти не ходит.
+    const b36 = (n) => Math.max(0, Math.round(n)).toString(36);
+    function mpEncodeEnemies(eiOut) {
+        const out = [], alive = new Set();
         for (const e of enemies) {
             if (e.dead) continue;
             if (!e.netId) e.netId = mp.nextEnemyId++;
+            alive.add(e.netId);
+            if (out.length >= 150) continue;
             const flags = (e.isBoss ? 1 : 0) | (e.isElite ? 2 : 0) | (e.rangedOnly ? 4 : 0) | ((e.telegraph || 0) > 0 ? 8 : 0);
-            out.push([e.netId, Math.round(e.x), Math.round(e.y), Math.round(e.size), Math.max(1, Math.ceil(e.hp)), Math.ceil(e.maxHp),
-                hexOf(e.color), flags, e.contactDmg || 10, e.isBoss ? 'boss' : (e.typeKey || 'glitcher')].join(','));
-            if (out.length >= 150) break;
+            out.push(b36(e.netId) + ',' + b36(e.x) + ',' + b36(e.y) + ',' + b36(Math.max(1, Math.ceil(e.hp))) + ',' + flags.toString(36));
+            if (!mp.eiSent.has(e.netId)) {
+                eiOut['ei/' + b36(e.netId)] = [Math.round(e.size), Math.ceil(e.maxHp), hexOf(e.color), e.contactDmg || 10, e.isBoss ? 'boss' : (e.typeKey || 'glitcher')].join(',');
+                mp.eiSent.add(e.netId);
+            }
         }
+        for (const id of mp.eiSent) if (!alive.has(id)) { eiOut['ei/' + b36(id)] = null; mp.eiSent.delete(id); }
         return out.join(';');
     }
 
-    function mpDecodeEnemies(str) {
+    function mpDecodeEnemies(str, ei) {
         const list = [];
-        if (!str) return list;
+        if (!str || !ei) return list;
         for (const part of String(str).split(';')) {
             const f = part.split(',');
-            if (f.length < 10) continue;
-            list.push({ id: +f[0], x: +f[1], y: +f[2], size: +f[3], hp: +f[4], maxHp: +f[5], color: '#' + f[6], flags: +f[7], cd: +f[8], type: f[9] });
+            if (f.length < 5) continue;
+            const st = ei[f[0]];
+            if (!st) continue;
+            const g = String(st).split(',');
+            list.push({ id: parseInt(f[0], 36), x: parseInt(f[1], 36), y: parseInt(f[2], 36), hp: parseInt(f[3], 36), flags: parseInt(f[4], 36),
+                size: +g[0] || 12, maxHp: +g[1] || 1, color: '#' + (g[2] || 'ff4466'), cd: +g[3] || 10, type: g[4] || 'glitcher' });
         }
         return list;
     }
 
     // Гость: враги — «тени» с позициями от хоста, плавно подтягиваем их к последним координатам
-    function mpSyncProxies(str) {
+    function mpSyncProxies(str, ei) {
         const seen = new Set(); const now = performance.now();
-        for (const d of mpDecodeEnemies(str)) {
+        for (const d of mpDecodeEnemies(str, ei)) {
             seen.add(d.id);
             let e = mp.proxies.get(d.id);
-            if (!e) { e = { proxy: true, netId: d.id, x: d.x, y: d.y, tx: d.x, ty: d.y, dead: false, flashTimer: 0, armor: 0, hp: d.hp }; mp.proxies.set(d.id, e); }
+            if (!e) { e = { proxy: true, netId: d.id, x: d.x, y: d.y, tx: d.x, ty: d.y, nvx: 0, nvy: 0, snapT: now, dead: false, flashTimer: 0, armor: 0, hp: d.hp }; mp.proxies.set(d.id, e); }
+            else {
+                // скорость по двум последним снимкам — между снимками враг продолжает двигаться
+                const dts = (now - e.snapT) / 1000;
+                if (dts > 0.05 && dts < 1.5) {
+                    e.nvx = e.nvx * 0.4 + ((d.x - e.tx) / dts) * 0.6;
+                    e.nvy = e.nvy * 0.4 + ((d.y - e.ty) / dts) * 0.6;
+                } else { e.nvx = 0; e.nvy = 0; }
+                e.snapT = now;
+            }
             e.tx = d.x; e.ty = d.y; e.size = d.size; e.maxHp = d.maxHp; e.color = d.color; e.contactDmg = d.cd;
             e.isBoss = !!(d.flags & 1); e.isElite = !!(d.flags & 2); e.rangedOnly = !!(d.flags & 4); e.telegraph = (d.flags & 8) ? 1 : 0;
             if (e.dead) { if (now - e.deadAt > 1200) { e.dead = false; e.hp = d.hp; } }
@@ -1259,10 +1380,12 @@ const Game = (() => {
     }
 
     function mpUpdateProxies(dt) {
-        const k = Math.min(1, dt * 10);
+        const k = Math.min(1, dt * 12), now = performance.now();
         for (const e of enemies) {
-            if (Math.abs(e.tx - e.x) > 200 || Math.abs(e.ty - e.y) > 200) { e.x = e.tx; e.y = e.ty; }
-            else { e.x += (e.tx - e.x) * k; e.y += (e.ty - e.y) * k; }
+            const age = Math.min(0.25, Math.max(0, (now - (e.snapT || now)) / 1000));
+            const px = e.tx + (e.nvx || 0) * age, py = e.ty + (e.nvy || 0) * age;
+            if (Math.abs(px - e.x) > 200 || Math.abs(py - e.y) > 200) { e.x = px; e.y = py; }
+            else { e.x += (px - e.x) * k; e.y += (py - e.y) * k; }
             e.flashTimer = Math.max(0, (e.flashTimer || 0) - dt);
             if (e.dead || mp.dead || e.rangedOnly || !player) continue;
             if (dist(e.x, e.y, player.x, player.y) < e.size + player.size) damagePlayer(e.contactDmg || 10);
@@ -1383,7 +1506,11 @@ const Game = (() => {
                 rm.lastSs = s.ss;
                 if (s.sh) { rm.color = SLOT_COLORS[(info.slot !== undefined ? +info.slot : 0) % 4]; mpSpawnRemoteShots(uid, s.sh); }
             }
-            rm.tx = s.x || 0; rm.ty = s.y || 0; rm.a = s.a || 0;
+            {
+                const nx = s.x || 0, ny = s.y || 0, nvx = s.vx || 0, nvy = s.vy || 0;
+                if (nx !== rm.tx || ny !== rm.ty || nvx !== rm.vx || nvy !== rm.vy || !rm.snapT) rm.snapT = performance.now();
+                rm.tx = nx; rm.ty = ny; rm.vx = nvx; rm.vy = nvy; rm.a = s.a || 0;
+            }
             if (mp.mode === 'pvp') {
                 // PvP: за убийство на месте гибели соперника появляется сфера опыта (только у убийцы)
                 const byMe = (s.kb && s.kb[mp.uid]) || 0;
@@ -1442,7 +1569,7 @@ const Game = (() => {
         if ((w.epb || 0) > mp.lastTeamEp) { evolutionPoints += w.epb - mp.lastTeamEp; mp.lastTeamEp = w.epb; }
         if (mp.mode === 'coop') kills = w.kills || 0;
         if (w.eps && w.eps !== mp.lastEps) { if (w.ep) mpSpawnEnemyShots(w.ep); mp.lastEps = w.eps; }
-        if (mp.mode === 'coop') mpSyncProxies(w.en || '');
+        if (mp.mode === 'coop') mpSyncProxies(w.en || '', w.ei || {});
         mp.boss = w.boss || '';
         if (w.ph === 'over') { mp.finalRes = w.res || ''; if (!mp.over) mpShowOver(w); return; }
         if ((w.ph === 'start' || w.ph === 'playing') && w.r > round) mpBeginRound(w.r);
@@ -1604,21 +1731,24 @@ const Game = (() => {
         const aim = angleBetween(p.x, p.y, mouseGameX, mouseGameY);
         const s = {
             mid: mp.matchId, n: mp.name, x: Math.round(p.x), y: Math.round(p.y), a: Math.round(aim * 100) / 100,
+            vx: mp.dead ? 0 : Math.round(p.vx), vy: mp.dead ? 0 : Math.round(p.vy),
             hp: Math.max(0, Math.ceil(p.hp)), mhp: Math.ceil(p.maxHp), lv: p.level, al: !mp.dead, rd: mp.readyRound, r: round,
             sz: Math.round(p.size), c: p.evolutionBranch ? UpgradeSystem.evolutionBranches[p.evolutionBranch].color : '',
             k: mp.myKills, kb: mp.kb, xp: Math.floor(p.xp), ep: evolutionPoints
         };
         if (mp.shotsOut.length) { s.sh = mp.shotsOut.join(';'); s.ss = netSeq(); mp.shotsOut = []; }
         if (mp.buildDirty) { s.b = mp.build.join('|'); mp.buildDirty = false; }
-        mp.net.sendState(s);
+        const sd = mpDelta(s, mp.lastSent);
+        if (sd) mp.net.sendState(sd);
         if (mp.isHost) {
             const w = { mid: mp.matchId, r: round, ph: mp.phase, t: Math.round(roundTimer * 100) / 100, xp: mp.teamXp, epb: mp.teamEp, kills,
                 boss: bossActive && !bossActive.dead ? `${bossActive.name}|${Math.max(0, Math.ceil(bossActive.hp))}|${Math.ceil(bossActive.maxHp)}` : '' };
-            if (mp.mode === 'coop') w.en = mpEncodeEnemies();
+            if (mp.mode === 'coop') { const ei = {}; w.en = mpEncodeEnemies(ei); Object.assign(w, ei); }
             if (mp.epOut.length) { w.ep = mp.epOut.join(';'); w.eps = netSeq(); mp.epOut = []; }
             if (mp.deathsOut.length) { w.dx = mp.deathsOut.join(';'); w.dxs = netSeq(); mp.deathsOut = []; }
             if (mp.phase === 'over') w.res = mp.finalRes;
-            mp.net.sendWorld(w);
+            const wd = mpDelta(w, mp.lastWorldSent);
+            if (wd) mp.net.sendWorld(wd);
         } else if (mp.mode === 'coop' && mp.hitsDirty) {
             mp.hitsDirty = false;
             const now = performance.now(), parts = [];
@@ -1630,13 +1760,30 @@ const Game = (() => {
         }
     }
 
+    // Отправляем только поля, которые изменились с прошлой отправки (update в базе их сливает).
+    // Стоящий на месте игрок почти ничего не шлёт, а пакеты в среднем в 2-3 раза меньше.
+    function mpDelta(obj, last) {
+        let out = null;
+        for (const k in obj) {
+            const v = obj[k];
+            if (k.indexOf('ei/') === 0) { (out || (out = {}))[k] = v; continue; }
+            const key = (v !== null && typeof v === 'object') ? JSON.stringify(v) : v;
+            if (last[k] === key) continue;
+            last[k] = key; (out || (out = {}))[k] = v;
+        }
+        return out;
+    }
+
     // ---------- КАДР ----------
     function mpFrame(dt) {
-        const k = Math.min(1, dt * 12);
+        const k = Math.min(1, dt * 15), now = performance.now();
         for (const uid in mp.remotes) {
             const rm = mp.remotes[uid];
-            if (Math.abs(rm.tx - rm.x) > 300 || Math.abs(rm.ty - rm.y) > 300) { rm.x = rm.tx; rm.y = rm.ty; }
-            else { rm.x += (rm.tx - rm.x) * k; rm.y += (rm.ty - rm.y) * k; }
+            // предсказание: последняя позиция + скорость * время с прихода пакета (не больше 0.3 с)
+            const age = rm.alive === false ? 0 : Math.min(0.3, Math.max(0, (now - (rm.snapT || now)) / 1000));
+            const px = clamp(rm.tx + (rm.vx || 0) * age, 0, GAME_W), py = clamp(rm.ty + (rm.vy || 0) * age, 0, GAME_H);
+            if (Math.abs(px - rm.x) > 300 || Math.abs(py - rm.y) > 300) { rm.x = px; rm.y = py; }
+            else { rm.x += (px - rm.x) * k; rm.y += (py - rm.y) * k; }
         }
         if (mp.isHost) mpHostFrame(dt);
         if (!mp) return;
@@ -1697,11 +1844,12 @@ const Game = (() => {
 
     function drawDeadOverlay() {
         ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, GAME_W, GAME_H);
-        ctx.textAlign = 'center'; ctx.fillStyle = '#ff1744'; ctx.font = "900 46px 'Orbitron', sans-serif";
-        ctx.fillText('ВЫ ПОГИБЛИ', GAME_W / 2, GAME_H / 2 - 10);
-        ctx.fillStyle = '#e0e0e0'; ctx.font = "18px 'Share Tech Mono', monospace";
-        ctx.fillText(mp.mode === 'pvp' ? `Возрождение через ${Math.max(0, mp.respawnTimer).toFixed(1)} с` : 'Вы вернётесь в следующем раунде, если команда выживет', GAME_W / 2, GAME_H / 2 + 30);
+        const cx = viewW / 2, cy = viewH / 2, big = Math.min(46, viewW / 11), small = Math.min(18, viewW / 32);
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, viewW, viewH);
+        ctx.textAlign = 'center'; ctx.fillStyle = '#ff1744'; ctx.font = `900 ${big}px 'Orbitron', sans-serif`;
+        ctx.fillText('ВЫ ПОГИБЛИ', cx, cy - 10);
+        ctx.fillStyle = '#e0e0e0'; ctx.font = `${small}px 'Share Tech Mono', monospace`;
+        ctx.fillText(mp.mode === 'pvp' ? `Возрождение через ${Math.max(0, mp.respawnTimer).toFixed(1)} с` : 'Вы вернётесь в следующем раунде, если команда выживет', cx, cy + small + 12);
         ctx.restore();
     }
 
@@ -1709,22 +1857,28 @@ const Game = (() => {
     // RENDER
     // ============================================================
     function render() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#050508'; ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.save(); ctx.translate(offsetX, offsetY); ctx.scale(scale, scale); Shake.apply(ctx);
-        
-        ctx.fillStyle = '#08080e'; ctx.fillRect(0, 0, GAME_W, GAME_H);
-        ctx.strokeStyle = 'rgba(0,240,255,0.04)'; ctx.lineWidth = 1;
-        for (let x = -(performance.now() / 200 % 40); x < GAME_W + 40; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, GAME_H); ctx.stroke(); }
-        for (let y = -(performance.now() / 200 % 40); y < GAME_H + 40; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(GAME_W, y); ctx.stroke(); }
 
+        ctx.fillStyle = '#08080e'; ctx.fillRect(0, 0, GAME_W, GAME_H);
+        // сетка одним путём: десятки отдельных stroke() заметно тормозят на телефонах
+        const now = performance.now(), gs = now / 200 % 40;
+        ctx.strokeStyle = 'rgba(0,240,255,0.04)'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let x = -gs; x < GAME_W + 40; x += 40) { ctx.moveTo(x, 0); ctx.lineTo(x, GAME_H); }
+        for (let y = -gs; y < GAME_H + 40; y += 40) { ctx.moveTo(0, y); ctx.lineTo(GAME_W, y); }
+        ctx.stroke();
+        if (cameraCrops()) { ctx.strokeStyle = 'rgba(0,240,255,0.35)'; ctx.lineWidth = 2; ctx.strokeRect(1, 1, GAME_W - 2, GAME_H - 2); }
+
+        // сферы: свечение кругом-ореолом вместо shadowBlur (shadowBlur очень дорогой на мобильных)
         for (const pk of pickups) {
-            const pulse = 1 + Math.sin(performance.now() / 120 + pk.x) * 0.2;
-            ctx.globalAlpha = pk.life < 3 ? clamp(pk.life / 3, 0.2, 1) : 1;
+            const pulse = 1 + Math.sin(now / 120 + pk.x) * 0.2, r = pk.size * pulse;
+            const a = pk.life < 3 ? clamp(pk.life / 3, 0.2, 1) : 1;
             ctx.fillStyle = pk.type === 'heal' ? '#22ff88' : '#a855f7';
-            ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
-            ctx.beginPath(); ctx.arc(pk.x, pk.y, pk.size * pulse, 0, Math.PI * 2); ctx.fill();
-            ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+            ctx.globalAlpha = a * 0.25; ctx.beginPath(); ctx.arc(pk.x, pk.y, r * 2.3, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = a; ctx.beginPath(); ctx.arc(pk.x, pk.y, r, 0, Math.PI * 2); ctx.fill();
         }
+        ctx.globalAlpha = 1;
         for (const e of enemies) { if (!e.dead) drawEnemy(e); }
         for (const p of projPool.active) {
             ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size, p.y - p.size, p.size * 2, p.size * 2);
@@ -1755,36 +1909,59 @@ const Game = (() => {
         }
 
         Particles.draw(ctx); DmgNumbers.draw(ctx);
-        if (mp && mp.dead && player && state !== 'gameover') drawDeadOverlay();
         ctx.restore();
+        // дальше — в координатах экрана (CSS-пиксели)
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (cameraCrops() && player && state !== 'gameover') drawOffscreenMarkers();
+        if (mp && mp.dead && player && state !== 'gameover') drawDeadOverlay();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     }
 
     function drawEnemy(e) {
-        ctx.save(); ctx.translate(e.x, e.y);
         ctx.fillStyle = e.color || '#ff4466';
-        ctx.beginPath(); ctx.arc(0, 0, e.size, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2); ctx.fill();
     }
 
+    // Когда камера показывает не всю арену: точки у края экрана в сторону врагов за его пределами
+    function drawOffscreenMarkers() {
+        const m = 7, s = cssScale; let n = 0;
+        for (const e of enemies) {
+            if (e.dead) continue;
+            const sx = e.x * s - camX * s, sy = e.y * s - camY * s;
+            if (sx >= -e.size * s && sx <= viewW + e.size * s && sy >= -e.size * s && sy <= viewH + e.size * s) continue;
+            ctx.globalAlpha = 0.75; ctx.fillStyle = e.isBoss ? '#ffd700' : (e.color || '#ff4466');
+            ctx.beginPath(); ctx.arc(clamp(sx, m, viewW - m), clamp(sy, m, viewH - m), e.isBoss ? 7 : 4, 0, Math.PI * 2); ctx.fill();
+            if (++n >= 40) break;
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    const hudEls = {}, hudVals = {};
+    function hudSet(id, prop, v) {
+        const key = id + '.' + prop;
+        if (hudVals[key] === v) return;
+        hudVals[key] = v;
+        const el = hudEls[id] || (hudEls[id] = document.getElementById(id));
+        if (prop === 'text') el.textContent = v; else el.style[prop] = v;
+    }
+    const pct = (a, b) => clamp(a / (b || 1) * 100, 0, 100).toFixed(1) + '%';
     function updateHUD() {
         if (!player) return;
-        document.getElementById('hudRound').textContent = round;
-        document.getElementById('hudTimer').textContent = roundTimer.toFixed(2);
-        document.getElementById('hudKills').textContent = kills;
-        document.getElementById('hudHealthFill').style.width = clamp(player.hp / player.maxHp * 100, 0, 100) + '%';
-        document.getElementById('hudHealthText').textContent = `${Math.ceil(player.hp)}/${player.maxHp}`;
-        document.getElementById('hudEP').textContent = Touch.enabled ? `EP: ${evolutionPoints}` : `EP: ${evolutionPoints}  [T] TREE`;
-        document.getElementById('hudXpFill').style.width = clamp(player.xp / player.xpToNext * 100, 0, 100) + '%';
-        document.getElementById('hudXpText').textContent = `LV ${player.level}  ${Math.floor(player.xp)}/${player.xpToNext} XP`;
-        const shieldBar = document.getElementById('hudShieldBar');
+        hudSet('hudRound', 'text', String(round));
+        hudSet('hudTimer', 'text', roundTimer.toFixed(Touch.enabled ? 1 : 2));
+        hudSet('hudKills', 'text', String(kills));
+        hudSet('hudHealthFill', 'width', pct(player.hp, player.maxHp));
+        hudSet('hudHealthText', 'text', `${Math.ceil(player.hp)}/${player.maxHp}`);
+        hudSet('hudEP', 'text', Touch.enabled ? `EP: ${evolutionPoints}` : `EP: ${evolutionPoints}  [T] TREE`);
+        hudSet('hudXpFill', 'width', pct(player.xp, player.xpToNext));
+        hudSet('hudXpText', 'text', `LV ${player.level}  ${Math.floor(player.xp)}/${player.xpToNext} XP`);
         if (player.maxShield > 0) {
-            shieldBar.style.display = 'block';
-            document.getElementById('hudShieldFill').style.width = clamp(player.shield / player.maxShield * 100, 0, 100) + '%';
-        } else shieldBar.style.display = 'none';
-        if (bossActive && !bossActive.dead) document.getElementById('hudBossFill').style.width = clamp(bossActive.hp / bossActive.maxHp * 100, 0, 100) + '%';
-        const dashEl = document.getElementById('hudDash');
-        dashEl.textContent = player.dashTimer > 0 ? `DASH ${player.dashTimer.toFixed(1)}s` : 'DASH READY';
+            hudSet('hudShieldBar', 'display', 'block');
+            hudSet('hudShieldFill', 'width', pct(player.shield, player.maxShield));
+        } else hudSet('hudShieldBar', 'display', 'none');
+        if (bossActive && !bossActive.dead) document.getElementById('hudBossFill').style.width = pct(bossActive.hp, bossActive.maxHp);
+        hudSet('hudDash', 'text', player.dashTimer > 0 ? `DASH ${player.dashTimer.toFixed(1)}s` : 'DASH READY');
     }
 
     function showGameOver() {
@@ -1822,6 +1999,9 @@ const Game = (() => {
         document.getElementById('chkShake').checked = !!s.shake;
         document.getElementById('chkDmgNum').checked = !!s.dmgNumbers;
         document.getElementById('selParticles').value = s.particles;
+        document.getElementById('selZoom').value = s.zoom;
+        document.getElementById('selQuality').value = s.quality;
+        document.getElementById('chkFullscreen').checked = !!s.fullscreen;
     }
     function openSettings(from) {
         settingsReturnTo = from; syncSettingsUI();
@@ -1848,7 +2028,10 @@ const Game = (() => {
         document.getElementById('volSfx').addEventListener('change', () => Audio.play('hit'));
         document.getElementById('chkShake').addEventListener('change', (e) => { s().shake = e.target.checked; onChange(); });
         document.getElementById('chkDmgNum').addEventListener('change', (e) => { s().dmgNumbers = e.target.checked; onChange(); });
-        document.getElementById('selParticles').addEventListener('change', (e) => { s().particles = e.target.value; onChange(); });
+        document.getElementById('selParticles').addEventListener('change', (e) => { s().particles = e.target.value; perf.lowParticles = false; onChange(); });
+        document.getElementById('selZoom').addEventListener('change', (e) => { s().zoom = e.target.value; onChange(); resize(); });
+        document.getElementById('selQuality').addEventListener('change', (e) => { s().quality = e.target.value; dprCap = 2; perf.sum = perf.frames = 0; onChange(); resize(); });
+        document.getElementById('chkFullscreen').addEventListener('change', (e) => { s().fullscreen = e.target.checked; onChange(); });
         document.getElementById('btnSettings').addEventListener('click', () => openSettings('menu'));
         document.getElementById('btnPauseSettings').addEventListener('click', () => openSettings('pause'));
         document.getElementById('btnSettingsBack').addEventListener('click', closeSettings);
@@ -1880,7 +2063,10 @@ const Game = (() => {
     }
 
     function init() {
-        resize(); window.addEventListener('resize', resize); initInput(); applySettings(); initSettings();
+        applySettings(); resize(); window.addEventListener('resize', resize);
+        window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+        document.addEventListener('fullscreenchange', () => setTimeout(resize, 100));
+        initInput(); initSettings();
         
         document.getElementById('btnPlay').addEventListener('click', startNewRun);
         document.getElementById('btnRestart').addEventListener('click', startNewRun);

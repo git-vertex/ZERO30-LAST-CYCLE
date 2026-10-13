@@ -2,12 +2,17 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>ZERO//30: LAST CYCLE</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
+    <div id="rotateHint" class="rotate-hint">Поверните телефон горизонтально</div>
 
     <!-- MAIN MENU -->
     <div id="mainMenu" class="screen active">
@@ -59,19 +64,25 @@
     <div id="onlineMenuScreen" class="screen">
         <div class="online-card">
             <h2>ONLINE</h2>
-            <div class="online-label">Режим новой комнаты</div>
-            <div class="mode-toggle">
-                <button class="mode-btn active" data-mode="coop" id="omModeCoop">КООПЕРАТИВ</button>
-                <button class="mode-btn" data-mode="pvp" id="omModePvp">PVP</button>
+            <div class="card-cols">
+                <div class="card-col">
+                    <div class="online-label">Режим новой комнаты</div>
+                    <div class="mode-toggle">
+                        <button class="mode-btn active" data-mode="coop" id="omModeCoop">КООПЕРАТИВ</button>
+                        <button class="mode-btn" data-mode="pvp" id="omModePvp">PVP</button>
+                    </div>
+                    <p id="omModeHint" class="online-sub"></p>
+                    <button class="menu-btn big" id="btnCreateRoom">СОЗДАТЬ КОМНАТУ</button>
+                </div>
+                <div class="card-col">
+                    <div class="online-label">Войти по коду</div>
+                    <div class="online-row">
+                        <input id="omCode" class="online-input code" type="text" placeholder="КОД" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false">
+                        <button class="menu-btn small" id="btnJoinRoom">ВОЙТИ</button>
+                    </div>
+                    <div id="omError" class="online-error"></div>
+                </div>
             </div>
-            <p id="omModeHint" class="online-sub"></p>
-            <button class="menu-btn big" id="btnCreateRoom">СОЗДАТЬ КОМНАТУ</button>
-            <div class="online-label">Войти по коду</div>
-            <div class="online-row">
-                <input id="omCode" class="online-input code" type="text" placeholder="КОД" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false">
-                <button class="menu-btn small" id="btnJoinRoom">ВОЙТИ</button>
-            </div>
-            <div id="omError" class="online-error"></div>
             <button class="menu-btn big ghost" id="btnOnlineBack">НАЗАД</button>
         </div>
     </div>
@@ -80,17 +91,23 @@
     <div id="lobbyScreen" class="screen">
         <div class="online-card">
             <h2>ЛОББИ</h2>
-            <div class="online-label">Код комнаты (нажмите, чтобы скопировать)</div>
-            <button id="lobbyCode" class="lobby-code">------</button>
-            <div class="mode-toggle">
-                <button class="mode-btn" data-mode="coop" id="lobbyModeCoop">КООПЕРАТИВ</button>
-                <button class="mode-btn" data-mode="pvp" id="lobbyModePvp">PVP</button>
+            <div class="card-cols">
+                <div class="card-col">
+                    <div class="online-label">Код комнаты (нажмите, чтобы скопировать)</div>
+                    <button id="lobbyCode" class="lobby-code">------</button>
+                    <div class="mode-toggle">
+                        <button class="mode-btn" data-mode="coop" id="lobbyModeCoop">КООПЕРАТИВ</button>
+                        <button class="mode-btn" data-mode="pvp" id="lobbyModePvp">PVP</button>
+                    </div>
+                    <p id="lobbyModeHint" class="online-sub"></p>
+                </div>
+                <div class="card-col">
+                    <div class="online-label">Игроки <span id="lobbyCount"></span></div>
+                    <div id="lobbyPlayers" class="lobby-players"></div>
+                    <p id="lobbyHint" class="online-sub"></p>
+                    <div id="lobbyError" class="online-error"></div>
+                </div>
             </div>
-            <p id="lobbyModeHint" class="online-sub"></p>
-            <div class="online-label">Игроки <span id="lobbyCount"></span></div>
-            <div id="lobbyPlayers" class="lobby-players"></div>
-            <p id="lobbyHint" class="online-sub"></p>
-            <div id="lobbyError" class="online-error"></div>
             <button class="menu-btn big" id="btnLobbyStart">СТАРТ</button>
             <button class="menu-btn big ghost" id="btnLobbyLeave">ПОКИНУТЬ КОМНАТУ</button>
         </div>
@@ -177,6 +194,26 @@
                 </select>
             </div>
             <div class="setting-row">
+                <label>Zoom</label>
+                <select id="selZoom">
+                    <option value="auto" selected>Auto</option>
+                    <option value="near">Close</option>
+                    <option value="fit">Whole Arena</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>Quality</label>
+                <select id="selQuality">
+                    <option value="auto" selected>Auto</option>
+                    <option value="high">High</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>Phone Fullscreen</label>
+                <input type="checkbox" id="chkFullscreen" checked>
+            </div>
+            <div class="setting-row">
                 <label>Аккаунт</label>
                 <span id="setAccount" class="setting-value">не выполнен вход</span>
             </div>
@@ -227,6 +264,7 @@
     <div id="touchLayer" class="touch-layer hidden">
         <div id="joyMove" class="joy joy-move"><div class="joy-knob"></div></div>
         <div id="joyAim" class="joy joy-aim"><div class="joy-knob"></div></div>
+        <button id="btnTouchDash" class="touch-dash">DASH</button>
         <button id="btnTouchPause" class="touch-pause">PAUSE</button>
     </div>
 
