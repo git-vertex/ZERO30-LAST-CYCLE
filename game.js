@@ -260,6 +260,8 @@ const Shake = (() => {
 // GAME ENGINE
 // ============================================================
 const Game = (() => {
+    // перевод строк, которые идут мимо DOM (canvas, confirm); остальной текст переводит i18n.js сам
+    const tr = (s) => (window.I18N ? window.I18N.t(s) : s);
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
 
@@ -298,6 +300,8 @@ const Game = (() => {
     function createPlayer() {
         return {
             x: GAME_W / 2, y: GAME_H / 2, vx: 0, vy: 0, size: PLAYER_SIZE,
+            // счётчики оружейных улучшений: без начальных значений Spiral Pattern / Alternating Shots давали NaN-снаряды
+            heavyShotCounter: 0, spiralAngle: 0, alternatingSide: 1, stormCounter: 0, burstFireCount: 0, burstFireTimer: 0,
             hp: 100, maxHp: 100, shield: 0, maxShield: 0,
             speed: 240, damage: 10, attackSpeed: 3.5, attackTimer: 0,
             critChance: 0.05, critDamage: 1.5, projSpeed: 450, projCount: 1, projPierce: 0, projRicochet: 0,
@@ -329,7 +333,7 @@ const Game = (() => {
 
     const eProjPool = new Pool(
         () => ({ x: 0, y: 0, vx: 0, vy: 0, damage: 0, size: 4, life: 0, color: '#ff4466', source: null }),
-        (p) => { p.life = 0; p.source = null; }, 200
+        (p) => { p.life = 0; p.source = null; p.wait = 0; }, 200
     );
 
     // ---------- ЭКРАН, КАМЕРА, КАЧЕСТВО ----------
@@ -493,7 +497,7 @@ const Game = (() => {
                 layer.classList.toggle('hidden', !want);
                 if (!want) releaseAll();
             }
-            const label = mp ? 'MENU' : 'PAUSE';
+            const label = tr(mp ? 'MENU' : 'PAUSE');
             if (pauseBtn.textContent !== label) pauseBtn.textContent = label;
             if (!shown || !player) return;
             const ds = (player.dashTimer > 0 || player.dashCharges <= 0) ? 'cooldown' : 'ready';
@@ -728,7 +732,7 @@ const Game = (() => {
             p.xp -= p.xpToNext; p.level++; p.xpToNext = Math.floor(XP_PER_LEVEL_BASE * Math.pow(XP_LEVEL_SCALE, p.level - 1));
             p.maxHp += 5; if (!(mp && mp.dead)) p.hp = Math.min(p.maxHp, p.hp + 5); p.damage += 1;
             Particles.emit(p.x, p.y, 30, '#a855f7', { speed: 80, life: 0.5 });
-            DmgNumbers.spawn(p.x, p.y - 24, 'LEVEL UP', true);
+            DmgNumbers.spawn(p.x, p.y - 24, tr('LEVEL UP'), true);
             Audio.play('upgrade');
         }
     }
@@ -748,9 +752,13 @@ const Game = (() => {
         if (p.heavyShotEnabled) { p.heavyShotCounter++; if (p.heavyShotCounter >= 5) { p.heavyShotCounter = 0; dmgMult = 3; } }
         if (p.spiralShot) { p.spiralAngle += 0.3; fireAngle += Math.sin(p.spiralAngle) * 0.5; }
 
-        let totalCount = p.projCount + (p.infiniteMag ? p.infiniteMagStacks : 0);
+        let totalCount = p.projCount + (p.infiniteMag ? (p.infiniteMagStacks || 0) : 0);
         let ox = 0, oy = 0;
-        if (p.alternatingShots) { p.alternatingSide *= -1; const perp = fireAngle + Math.PI / 2; ox = Math.cos(perp) * 12 * p.alternatingSide; oy = Math.sin(perp) * 12 * p.alternatingSide; }
+        if (p.alternatingShots) { p.alternatingSide = (p.alternatingSide || 1) * -1; const perp = fireAngle + Math.PI / 2; ox = Math.cos(perp) * 12 * p.alternatingSide; oy = Math.sin(perp) * 12 * p.alternatingSide; }
+        // страховка: одна NaN-величина делает все выстрелы невидимыми — лучше выстрелить прямо
+        if (!Number.isFinite(fireAngle)) { fireAngle = Number.isFinite(aimAngle) ? aimAngle : 0; if (!Number.isFinite(p.spiralAngle)) p.spiralAngle = 0; }
+        if (!Number.isFinite(ox) || !Number.isFinite(oy)) { ox = 0; oy = 0; p.alternatingSide = 1; }
+        if (!Number.isFinite(totalCount) || totalCount < 1) totalCount = 1;
 
         fireProjectileFan(p.x + ox, p.y + oy, fireAngle, totalCount, p.projSpread, dmgMult);
 
@@ -922,6 +930,7 @@ const Game = (() => {
 
     function updateEnemyProjectiles(dt) {
         eProjPool.update(dt, (proj, dt) => {
+            if (proj.wait > 0) { proj.wait -= dt; return false; } // выстрел врага ещё «не случился» в показываемом прошлом
             proj.x += proj.vx * dt; proj.y += proj.vy * dt; proj.life -= dt;
             if (proj.x < -20 || proj.x > GAME_W + 20 || proj.y < -20 || proj.y > GAME_H + 20) return true;
             
@@ -1080,6 +1089,7 @@ const Game = (() => {
     })();
 
     function startRound() {
+        document.getElementById('evolutionTreeScreen').classList.remove('active');
         state = 'roundStart'; roundStartTimer = 1.5;
         document.getElementById('roundStart').classList.remove('hidden'); document.getElementById('roundStart').classList.add('visible');
         document.getElementById('rsRound').textContent = (mp && mp.mode === 'pvp') ? `${round}/${PVP_ROUNDS}` : round;
@@ -1120,7 +1130,7 @@ const Game = (() => {
     }
 
     function selectUpgradeByIndex(idx) {
-        if (upgradeSelectionPending || idx < 0 || idx >= currentUpgradeOptions.length) return;
+        if (upgradeSelectionPending || state !== 'upgrading' || idx < 0 || idx >= currentUpgradeOptions.length) return;
         upgradeSelectionPending = true; const up = currentUpgradeOptions[idx];
         UpgradeSystem.apply(up, player); acquiredUpgrades.push(up);
         if (mp) { mp.build.push('u:' + up.id); mp.buildDirty = true; }
@@ -1128,9 +1138,10 @@ const Game = (() => {
         Audio.play('upgrade'); setTimeout(() => {
             document.getElementById('upgradeScreen').classList.remove('active');
             if (!online) { advanceRound(); return; }
-            if (!mp || state !== 'upgrading') return;
+            if (!mp || (state !== 'upgrading' && state !== 'evolutionTree')) return;
             // В сетевой игре ждём остальных: следующий раунд запускает хост
-            mp.readyRound = round; mp.forceSend = true; mpShowWait();
+            mp.readyRound = round; mp.forceSend = true;
+            if (state === 'upgrading') mpShowWait(); // при открытом дереве ожидание покажет его закрытие
         }, 400);
     }
 
@@ -1138,8 +1149,13 @@ const Game = (() => {
     // EVOLUTION TREE UI
     // ============================================================
     function openEvolutionTree() {
+        if (state === 'evolutionTree' || (state === 'upgrading' && upgradeSelectionPending)) return;
         const prev = state; state = 'evolutionTree';
         const screen = document.getElementById('evolutionTreeScreen');
+        // экран улучшений прячем, пока открыто дерево: раньше можно было выбрать карту «сквозь» дерево,
+        // раунд начинался, а «Confirm & Close» возвращал игру в состояние выбора, и всё замирало
+        const upScreen = document.getElementById('upgradeScreen');
+        screen._hadUpgrade = upScreen.classList.contains('active'); upScreen.classList.remove('active');
         screen.innerHTML = `
             <div class="evo-tree-container">
                 <div class="evo-top-bar">
@@ -1159,8 +1175,14 @@ const Game = (() => {
     }
 
     function closeEvolutionTree() {
-        const prev = document.getElementById('evolutionTreeScreen')._prevState || 'playing';
-        document.getElementById('evolutionTreeScreen').classList.remove('active'); state = prev;
+        const screen = document.getElementById('evolutionTreeScreen');
+        screen.classList.remove('active');
+        if (state !== 'evolutionTree') return; // раунд уже начался без дерева - состояние не трогаем
+        state = screen._prevState || 'playing';
+        if (state === 'upgrading' && screen._hadUpgrade) {
+            if (mp && mp.readyRound >= round) mpShowWait(); // в сети улучшение уже выбрано - ждём остальных
+            else document.getElementById('upgradeScreen').classList.add('active');
+        }
     }
 
     function renderEvolutionTreeGraph() {
@@ -1201,7 +1223,7 @@ const Game = (() => {
             if (nd.status === 'current') el.style.color = nd.branchColor;
             el.textContent = nd.status === 'locked' ? '' : nd.icon;
             if (nd.status === 'available') el.addEventListener('click', () => {
-                if (!player.evolutionBranch && nd.tier === 1 && !confirm(`Commit to ${nd.branchName}? Other branches will lock.`)) return;
+                if (!player.evolutionBranch && nd.tier === 1 && !confirm(tr(`Commit to ${nd.branchName}? Other branches will lock.`))) return;
                 evolutionPoints -= nd.form.cost; UpgradeSystem.applyEvolutionForm(player, nd.branchId, nd.form.id);
                 if (mp) { mp.build.push(`e:${nd.branchId}:${nd.form.id}`); mp.buildDirty = true; mp.forceSend = true; }
                 renderEvolutionTreeGraph();
@@ -1223,6 +1245,66 @@ const Game = (() => {
     // Каждый пишет только свою часть: state/{uid}, hits/{uid}; хост — world.
     // ============================================================
     const NET_SEND_INTERVAL = 0.25;      // отправка не чаще 4 раз в секунду
+
+    // ---------- ПЛАВНОСТЬ ДВИЖЕНИЯ ПО СЕТИ ----------
+    // Отправитель ставит на пакет метку своих часов (ts / wt). Снимки хранятся в буфере по времени отправителя,
+    // поэтому расстояние между ними всегда честное (250 мс), как бы неровно ни приходили пакеты.
+    // Показываем их по своим «часам воспроизведения» с задержкой чуть больше интервала отправки:
+    // эти часы идут только вперёд и подстраиваются под сеть плавно (скорость 0.9-1.1), без скачков назад.
+    function netStamp(o, ts, now) {
+        if (typeof ts !== 'number') { o.off = 0; return now; } // старый клиент без меток: время прихода
+        if (o.lastTs === ts) return ts;
+        if (o.lastTs !== undefined && ts < o.lastTs - 3000) { o.off = undefined; o.buf = null; o.pt = undefined; } // у отправителя перезапустились часы
+        o.lastTs = ts;
+        const off = now - ts; // задержка сети + разница часов; минимум = самый быстрый пакет
+        if (o.off === undefined || off < o.off) o.off = off; else o.off += (off - o.off) * 0.01;
+        const lag = now - (ts + o.off);
+        o.jit = o.jit === undefined ? lag : o.jit * 0.9 + lag * 0.1;
+        return ts;
+    }
+    function netPlay(o, now) {
+        if (o.ptNow === now && o.pt !== undefined) return o.pt;
+        const target = now - (o.off || 0) - netDelay(o);
+        if (o.pt === undefined || Math.abs(target - o.pt) > 600) o.pt = target;
+        else {
+            const adv = Math.max(0, now - o.ptNow);
+            o.pt += adv + clamp(target - (o.pt + adv), -0.1 * adv, 0.1 * adv);
+        }
+        o.ptNow = now;
+        return o.pt;
+    }
+    function netDelay(o) { return clamp(NET_SEND_INTERVAL * 1000 + 50 + 2 * (o.jit || 0), 280, 650); }
+    function snapPush(o, t, x, y, vx, vy) {
+        const b = o.buf || (o.buf = []);
+        const last = b[b.length - 1];
+        if (last) {
+            if (t <= last.t) return;
+            if (Math.abs(x - last.x) + Math.abs(y - last.y) > 400) b.length = 0; // телепорт (возрождение): без «полёта» через карту
+            else if (t - last.t > NET_SEND_INTERVAL * 1600) b.push({ t: t - NET_SEND_INTERVAL * 1000, x: last.x, y: last.y, vx: 0, vy: 0 }); // стоял, потом поехал
+        }
+        b.push({ t, x, y, vx, vy });
+        if (b.length > 12) b.splice(0, b.length - 12);
+    }
+    function snapSample(o, rt) {
+        const b = o.buf;
+        if (!b || !b.length) return null;
+        if (rt <= b[0].t) return b[0];
+        for (let i = b.length - 1; i >= 0; i--) {
+            const a = b[i];
+            if (a.t > rt) continue;
+            const c = b[i + 1];
+            if (c) { const f = (rt - a.t) / ((c.t - a.t) || 1); return { x: a.x + (c.x - a.x) * f, y: a.y + (c.y - a.y) * f }; }
+            // новее снимков нет: недолго продолжаем движение (скорость из пакета или по двум последним снимкам)
+            let vx = a.vx, vy = a.vy;
+            const q = b[i - 1];
+            if (vx === undefined) { vx = q ? (a.x - q.x) / ((a.t - q.t) || 1) * 1000 : 0; vy = q ? (a.y - q.y) / ((a.t - q.t) || 1) * 1000 : 0; }
+            const ex = Math.min(rt - a.t, 150) / 1000;
+            return { x: a.x + vx * ex, y: a.y + vy * ex };
+        }
+        return b[0];
+    }
+    // через сколько секунд показать выстрел, чтобы он вылетал из корабля, который мы видим с задержкой
+    function netShotWait(o, st, now) { return clamp((st - NET_SEND_INTERVAL * 500 - netPlay(o, now)) / 1000, 0, 0.6); }
     const PVP_ROUNDS = 5;
     const UPGRADE_WAIT_LIMIT = 45;       // сек: не ждать вечно игрока, ушедшего в AFK на экране улучшений
     const SLOT_COLORS = ['#00f0ff', '#ff3df2', '#ffd400', '#3dff7a'];
@@ -1401,21 +1483,13 @@ const Game = (() => {
     }
 
     // Гость: враги — «тени» с позициями от хоста, плавно подтягиваем их к последним координатам
-    function mpSyncProxies(str, ei) {
+    function mpSyncProxies(str, ei, lt) {
         const seen = new Set(); const now = performance.now();
         for (const d of mpDecodeEnemies(str, ei)) {
             seen.add(d.id);
             let e = mp.proxies.get(d.id);
-            if (!e) { e = { proxy: true, netId: d.id, x: d.x, y: d.y, tx: d.x, ty: d.y, nvx: 0, nvy: 0, snapT: now, dead: false, flashTimer: 0, armor: 0, hp: d.hp }; mp.proxies.set(d.id, e); }
-            else {
-                // скорость по двум последним снимкам — между снимками враг продолжает двигаться
-                const dts = (now - e.snapT) / 1000;
-                if (dts > 0.05 && dts < 1.5) {
-                    e.nvx = e.nvx * 0.4 + ((d.x - e.tx) / dts) * 0.6;
-                    e.nvy = e.nvy * 0.4 + ((d.y - e.ty) / dts) * 0.6;
-                } else { e.nvx = 0; e.nvy = 0; }
-                e.snapT = now;
-            }
+            if (!e) { e = { proxy: true, netId: d.id, x: d.x, y: d.y, tx: d.x, ty: d.y, dead: false, flashTimer: 0, armor: 0, hp: d.hp }; mp.proxies.set(d.id, e); }
+            if (lt !== null && lt !== undefined) snapPush(e, lt, d.x, d.y);
             e.tx = d.x; e.ty = d.y; e.size = d.size; e.maxHp = d.maxHp; e.color = d.color; e.contactDmg = d.cd;
             e.isBoss = !!(d.flags & 1); e.isElite = !!(d.flags & 2); e.rangedOnly = !!(d.flags & 4); e.telegraph = (d.flags & 8) ? 1 : 0;
             if (e.dead) { if (now - e.deadAt > 1200) { e.dead = false; e.hp = d.hp; } }
@@ -1426,12 +1500,10 @@ const Game = (() => {
     }
 
     function mpUpdateProxies(dt) {
-        const k = Math.min(1, dt * 12), now = performance.now();
+        const now = performance.now(), rt = netPlay(mp.hostClk || (mp.hostClk = {}), now);
         for (const e of enemies) {
-            const age = Math.min(0.25, Math.max(0, (now - (e.snapT || now)) / 1000));
-            const px = e.tx + (e.nvx || 0) * age, py = e.ty + (e.nvy || 0) * age;
-            if (Math.abs(px - e.x) > 200 || Math.abs(py - e.y) > 200) { e.x = px; e.y = py; }
-            else { e.x += (px - e.x) * k; e.y += (py - e.y) * k; }
+            const pos = snapSample(e, rt);
+            if (pos) { e.x = pos.x; e.y = pos.y; } else { e.x = e.tx; e.y = e.ty; }
             e.flashTimer = Math.max(0, (e.flashTimer || 0) - dt);
             if (e.dead || mp.dead || e.rangedOnly || !player) continue;
             if (dist(e.x, e.y, player.x, player.y) < e.size + player.size) damagePlayer(e.contactDmg || 10);
@@ -1482,13 +1554,13 @@ const Game = (() => {
             Math.round(proj.size * 10), Math.round(proj.damage), proj.crit ? 1 : (proj.isPhantom ? 2 : (proj.beam ? 3 : 0)), Math.round(proj.life * 10)].join(','));
     }
 
-    function mpSpawnRemoteShots(owner, str) {
+    function mpSpawnRemoteShots(owner, str, wait) {
         const rm = mp.remotes[owner];
         for (const part of String(str).split(';')) {
             const f = part.split(',').map(Number);
             if (f.length < 8) continue;
             rprojs.push({ x: f[0], y: f[1], vx: f[2], vy: f[3], size: Math.max(2, f[4] / 10), dmg: f[5],
-                color: f[6] === 1 ? '#ffd700' : f[6] === 2 ? '#cc44ff' : (rm ? rm.color : '#ff3df2'), life: f[7] / 10, owner, beam: f[6] === 3 });
+                color: f[6] === 1 ? '#ffd700' : f[6] === 2 ? '#cc44ff' : (rm ? rm.color : '#ff3df2'), life: f[7] / 10, owner, beam: f[6] === 3, wait: wait || 0 });
         }
         if (rprojs.length > 400) rprojs.splice(0, rprojs.length - 400);
     }
@@ -1496,6 +1568,7 @@ const Game = (() => {
     function mpUpdateRemoteProjectiles(dt) {
         for (let i = rprojs.length - 1; i >= 0; i--) {
             const q = rprojs[i];
+            if (q.wait > 0) { q.wait -= dt; continue; }
             const sx = q.x, sy = q.y;
             q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt;
             let remove = q.life <= 0 || q.x < -20 || q.x > GAME_W + 20 || q.y < -20 || q.y > GAME_H + 20;
@@ -1517,12 +1590,12 @@ const Game = (() => {
         mp.epOut.push([Math.round(x), Math.round(y), Math.round(vx), Math.round(vy), Math.round(damage || 0), hexOf(color), Math.round((life || 3) * 10)].join(','));
     }
 
-    function mpSpawnEnemyShots(str) {
+    function mpSpawnEnemyShots(str, wait) {
         for (const part of String(str).split(';')) {
             const f = part.split(',');
             if (f.length < 7) continue;
             const p = eProjPool.get();
-            p.x = +f[0]; p.y = +f[1]; p.vx = +f[2]; p.vy = +f[3]; p.damage = +f[4]; p.color = '#' + f[5]; p.life = (+f[6]) / 10; p.size = 4; p.source = null;
+            p.x = +f[0]; p.y = +f[1]; p.vx = +f[2]; p.vy = +f[3]; p.damage = +f[4]; p.color = '#' + f[5]; p.life = (+f[6]) / 10; p.size = 4; p.source = null; p.wait = wait || 0;
         }
     }
 
@@ -1551,11 +1624,18 @@ const Game = (() => {
                 rm = mp.remotes[uid] = { uid, x: s.x || 0, y: s.y || 0, tx: s.x || 0, ty: s.y || 0, a: 0, lastSs: s.ss, size: PLAYER_SIZE };
             } else if (s.ss && s.ss !== rm.lastSs) {
                 rm.lastSs = s.ss;
-                if (s.sh) { rm.color = SLOT_COLORS[(info.slot !== undefined ? +info.slot : 0) % 4]; mpSpawnRemoteShots(uid, s.sh); }
+                if (s.sh) {
+                    rm.color = SLOT_COLORS[(info.slot !== undefined ? +info.slot : 0) % 4];
+                    const now = performance.now();
+                    mpSpawnRemoteShots(uid, s.sh, netShotWait(rm, netStamp(rm, s.ts, now), now));
+                }
             }
             {
-                const nx = s.x || 0, ny = s.y || 0, nvx = s.vx || 0, nvy = s.vy || 0;
-                if (nx !== rm.tx || ny !== rm.ty || nvx !== rm.vx || nvy !== rm.vy || !rm.snapT) rm.snapT = performance.now();
+                const nx = s.x || 0, ny = s.y || 0, nvx = s.vx || 0, nvy = s.vy || 0, now = performance.now();
+                // отдельная метка для позиции: netStamp мог уже обработать этот пакет из-за выстрелов
+                const fresh = typeof s.ts === 'number' ? s.ts !== rm.posTs : (nx !== rm.tx || ny !== rm.ty || !rm.buf);
+                rm.posTs = s.ts;
+                if (fresh) snapPush(rm, netStamp(rm, s.ts, now), nx, ny, nvx, nvy);
                 rm.tx = nx; rm.ty = ny; rm.vx = nvx; rm.vy = nvy; rm.a = s.a || 0;
             }
             if (mp.mode === 'pvp') {
@@ -1590,7 +1670,7 @@ const Game = (() => {
         else if (mine > mp.pvpKillsSeen && player) {
             const d = mine - mp.pvpKillsSeen; mp.pvpKillsSeen = mine;
             player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.2 * d);
-            DmgNumbers.spawn(player.x, player.y - 30, '+KILL', true); Audio.play('kill');
+            DmgNumbers.spawn(player.x, player.y - 30, tr('+KILL'), true); Audio.play('kill');
         }
         kills = mine;
     }
@@ -1615,8 +1695,11 @@ const Game = (() => {
         }
         if ((w.epb || 0) > mp.lastTeamEp) { evolutionPoints += w.epb - mp.lastTeamEp; mp.lastTeamEp = w.epb; }
         if (mp.mode === 'coop') kills = w.kills || 0;
-        if (w.eps && w.eps !== mp.lastEps) { if (w.ep) mpSpawnEnemyShots(w.ep); mp.lastEps = w.eps; }
-        if (mp.mode === 'coop') mpSyncProxies(w.en || '', w.ei || {});
+        const wnow = performance.now(), hc = mp.hostClk || (mp.hostClk = {});
+        const freshWorld = typeof w.wt === 'number' ? w.wt !== hc.lastTs : true;
+        const wlt = netStamp(hc, w.wt, wnow);
+        if (w.eps && w.eps !== mp.lastEps) { if (w.ep) mpSpawnEnemyShots(w.ep, netShotWait(hc, wlt, wnow)); mp.lastEps = w.eps; }
+        if (mp.mode === 'coop') mpSyncProxies(w.en || '', w.ei || {}, freshWorld ? wlt : null);
         mp.boss = w.boss || '';
         if (w.ph === 'over') { mp.finalRes = w.res || ''; if (!mp.over) mpShowOver(w); return; }
         if ((w.ph === 'start' || w.ph === 'playing') && w.r > round) mpBeginRound(w.r);
@@ -1786,7 +1869,7 @@ const Game = (() => {
         if (mp.shotsOut.length) { s.sh = mp.shotsOut.join(';'); s.ss = netSeq(); mp.shotsOut = []; }
         if (mp.buildDirty) { s.b = mp.build.join('|'); mp.buildDirty = false; }
         const sd = mpDelta(s, mp.lastSent);
-        if (sd) mp.net.sendState(sd);
+        if (sd) { sd.ts = Math.round(performance.now()); mp.net.sendState(sd); }
         if (mp.isHost) {
             const w = { mid: mp.matchId, r: round, ph: mp.phase, t: Math.round(roundTimer * 100) / 100, xp: mp.teamXp, epb: mp.teamEp, kills,
                 boss: bossActive && !bossActive.dead ? `${bossActive.name}|${Math.max(0, Math.ceil(bossActive.hp))}|${Math.ceil(bossActive.maxHp)}` : '' };
@@ -1795,7 +1878,7 @@ const Game = (() => {
             if (mp.deathsOut.length) { w.dx = mp.deathsOut.join(';'); w.dxs = netSeq(); mp.deathsOut = []; }
             if (mp.phase === 'over') w.res = mp.finalRes;
             const wd = mpDelta(w, mp.lastWorldSent);
-            if (wd) mp.net.sendWorld(wd);
+            if (wd) { wd.wt = Math.round(performance.now()); mp.net.sendWorld(wd); }
         } else if (mp.mode === 'coop' && mp.hitsDirty) {
             mp.hitsDirty = false;
             const now = performance.now(), parts = [];
@@ -1826,11 +1909,9 @@ const Game = (() => {
         const k = Math.min(1, dt * 15), now = performance.now();
         for (const uid in mp.remotes) {
             const rm = mp.remotes[uid];
-            // предсказание: последняя позиция + скорость * время с прихода пакета (не больше 0.3 с)
-            const age = rm.alive === false ? 0 : Math.min(0.3, Math.max(0, (now - (rm.snapT || now)) / 1000));
-            const px = clamp(rm.tx + (rm.vx || 0) * age, 0, GAME_W), py = clamp(rm.ty + (rm.vy || 0) * age, 0, GAME_H);
-            if (Math.abs(px - rm.x) > 300 || Math.abs(py - rm.y) > 300) { rm.x = px; rm.y = py; }
-            else { rm.x += (px - rm.x) * k; rm.y += (py - rm.y) * k; }
+            const pos = snapSample(rm, netPlay(rm, now));
+            if (pos) { rm.x = clamp(pos.x, 0, GAME_W); rm.y = clamp(pos.y, 0, GAME_H); }
+            else { rm.x += (rm.tx - rm.x) * k; rm.y += (rm.ty - rm.y) * k; }
         }
         if (mp.isHost) mpHostFrame(dt);
         if (!mp) return;
@@ -1883,7 +1964,7 @@ const Game = (() => {
             ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
         };
         for (const p of projPool.active) if (p.beam) seg(p.x, p.y, p.vx, p.vy, Math.max(2, p.size), p.color);
-        for (const q of rprojs) if (q.beam) seg(q.x, q.y, q.vx, q.vy, Math.max(2, q.size), q.color);
+        for (const q of rprojs) if (q.beam && !(q.wait > 0)) seg(q.x, q.y, q.vx, q.vy, Math.max(2, q.size), q.color);
         ctx.globalAlpha = 1;
     }
 
@@ -1904,7 +1985,7 @@ const Game = (() => {
             ctx.globalAlpha = 1;
             ctx.restore();
         }
-        for (const q of rprojs) { if (q.beam) continue; ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill(); }
+        for (const q of rprojs) { if (q.beam || q.wait > 0) continue; ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill(); }
     }
 
     function drawDeadOverlay() {
@@ -1912,9 +1993,9 @@ const Game = (() => {
         const cx = viewW / 2, cy = viewH / 2, big = Math.min(46, viewW / 11), small = Math.min(18, viewW / 32);
         ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, viewW, viewH);
         ctx.textAlign = 'center'; ctx.fillStyle = '#ff1744'; ctx.font = `900 ${big}px 'Orbitron', sans-serif`;
-        ctx.fillText('ВЫ ПОГИБЛИ', cx, cy - 10);
+        ctx.fillText(tr('ВЫ ПОГИБЛИ'), cx, cy - 10);
         ctx.fillStyle = '#e0e0e0'; ctx.font = `${small}px 'Share Tech Mono', monospace`;
-        ctx.fillText(mp.mode === 'pvp' ? `Возрождение через ${Math.max(0, mp.respawnTimer).toFixed(1)} с` : 'Вы вернётесь в следующем раунде, если команда выживет', cx, cy + small + 12);
+        ctx.fillText(tr(mp.mode === 'pvp' ? `Возрождение через ${Math.max(0, mp.respawnTimer).toFixed(1)} с` : 'Вы вернётесь в следующем раунде, если команда выживет'), cx, cy + small + 12);
         ctx.restore();
     }
 
@@ -1968,6 +2049,7 @@ const Game = (() => {
             ctx.globalAlpha = 1;
         }
         for (const p of eProjPool.active) {
+            if (p.wait > 0) continue;
             ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
         }
 
